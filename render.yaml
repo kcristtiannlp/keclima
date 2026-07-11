@@ -1,0 +1,13 @@
+# Deploy no Render: New → Blueprint → este repositório
+# https://render.com/docs/blueprint-spec
+services:
+  - type: web
+    name: keclima
+    runtime: python
+    plan: free
+    buildCommand: "true"
+    startCommand: python3 serve.py
+    healthCheckPath: /api/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.0"

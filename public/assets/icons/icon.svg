@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="KeClima">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0ea5e9"/>
+      <stop offset="100%" stop-color="#6366f1"/>
+    </linearGradient>
+    <linearGradient id="sun" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#fde68a"/>
+      <stop offset="100%" stop-color="#f59e0b"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
+  <circle cx="330" cy="190" r="72" fill="url(#sun)"/>
+  <path fill="#ffffff" d="M150 330c0-48 38-86 86-86 10 0 20 2 29 5 14-34 48-58 87-58 52 0 94 42 94 94 0 4 0 8-1 12 36 8 62 40 62 78 0 44-36 80-80 80H198c-48 0-88-40-88-88 0-14 3-27 10-39z"/>
+</svg>

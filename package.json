@@ -1,0 +1,27 @@
+{
+  "name": "keclima",
+  "version": "0.5.0",
+  "description": "KeClima – Progressive Web App de meteorologia completa",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "start": "python3 serve.py 8080",
+    "serve": "python3 serve.py 8080",
+    "serve:static": "python3 -m http.server 8080",
+    "test": "python3 serve.py 8080",
+    "lint": "eslint src --ext .js",
+    "format": "prettier --write \"src/**/*.{js,css,html}\" \"*.{js,json,html,md}\" \"public/**/*\""
+  },
+  "keywords": [
+    "weather",
+    "pwa",
+    "meteorology",
+    "open-meteo"
+  ],
+  "author": "KeClima",
+  "license": "MIT",
+  "devDependencies": {
+    "eslint": "^9.0.0",
+    "prettier": "^3.0.0"
+  }
+}

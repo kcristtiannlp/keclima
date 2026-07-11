@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <title>KeClima Unit Tests</title>
+    <style>
+      body { font-family: system-ui, sans-serif; margin: 2rem; background: #0f172a; color: #e2e8f0; }
+      .ok { color: #4ade80; }
+      .fail { color: #f87171; }
+      h1 { margin-top: 0; }
+      li { margin: 0.25rem 0; }
+    </style>
+  </head>
+  <body>
+    <h1>KeClima — unit tests</h1>
+    <p id="summary">Running…</p>
+    <ul id="list"></ul>
+    <script type="module">
+      import { runUnitTests } from './unit-tests.js';
+      const { passed, failed, results } = runUnitTests();
+      document.getElementById('summary').textContent = `${passed} passed, ${failed} failed`;
+      const list = document.getElementById('list');
+      for (const r of results) {
+        const li = document.createElement('li');
+        li.className = r.ok ? 'ok' : 'fail';
+        li.textContent = `${r.ok ? '✓' : '✗'} ${r.name}${r.detail ? ' — ' + r.detail : ''}`;
+        list.append(li);
+      }
+      if (failed) console.error(results.filter((r) => !r.ok));
+      else console.info('All tests passed');
+    </script>
+  </body>
+</html>

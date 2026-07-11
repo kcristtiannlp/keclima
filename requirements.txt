@@ -1,0 +1,2 @@
+# KeClima usa apenas a biblioteca padrão do Python 3.
+# Arquivo vazio de propósito — PaaS (Render/Railway) reconhece o projeto como Python.
