@@ -31,12 +31,10 @@ import { InmetWidget } from '../widgets/InmetWidget.js';
 import { SourcesWidget } from '../widgets/SourcesWidget.js';
 import { MapWidget } from '../widgets/MapWidget.js';
 import { DeforestationWidget } from '../widgets/DeforestationWidget.js';
-import { SurvivalWidget } from '../widgets/SurvivalWidget.js';
 import { t } from '../utils/i18n.js';
 import { loadCompareWeather } from '../services/weatherService.js';
 
 const FACTORY = {
-  survival: () => new SurvivalWidget(),
   temperature: () => new TemperatureWidget(),
   inmet: () => new InmetWidget(),
   conditions: () => new ConditionsWidget(),
@@ -60,7 +58,6 @@ const FACTORY = {
 };
 
 const LABEL_KEYS = {
-  survival: 'surv_title',
   temperature: 'temperature',
   inmet: 'inmet_title',
   conditions: 'condition',

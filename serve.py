@@ -23,7 +23,7 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
-APP_VERSION = "0.5.0"
+APP_VERSION = "0.6.0"
 
 
 def resolve_port() -> int:
@@ -1185,7 +1185,7 @@ class Handler(SimpleHTTPRequestHandler):
                 timeout=20,
                 accept="application/json",
                 extra_headers={
-                    "User-Agent": "KeClima/0.4 (weather-pwa; opensky-proxy)",
+                    "User-Agent": "KeClima/0.6 (weather-pwa; opensky-proxy)",
                     "Referer": "https://opensky-network.org/",
                     "Origin": "https://opensky-network.org",
                 },

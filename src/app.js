@@ -75,10 +75,6 @@ export async function createApp(root, options = {}) {
     const { renderAboutPage } = await import('./pages/AboutPage.js');
     return renderAboutPage(c);
   });
-  registerRoute(ROUTES.survival, async (c) => {
-    const { renderSurvivalPage } = await import('./pages/SurvivalPage.js');
-    return renderSurvivalPage(c);
-  });
 
   // UI pronta — remove splash antes de rede/onboarding
   startRouter();

@@ -16,7 +16,6 @@ const PRIMARY = [
 ];
 
 const MORE = [
-  { path: ROUTES.survival, key: 'nav_survival', icon: '🛡️' },
   { path: ROUTES.favorites, key: 'nav_favorites', icon: '⭐' },
   { path: ROUTES.history, key: 'nav_history', icon: '📜' },
   { path: ROUTES.about, key: 'nav_about', icon: 'ℹ️' },

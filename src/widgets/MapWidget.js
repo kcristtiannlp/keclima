@@ -1,11 +1,5 @@
 /**
- * Mapa Leaflet com camadas OSM, radar, satélite, nuvens, temp, vento, raios e voos.
- *
- * Diferença importante:
- * - Radar  → precipitação (chuva/neve detectada por radar)
- * - Satélite → imagem infravermelha (visão espacial, cinza)
- * - Nuvens → % de nebulosidade (Open-Meteo), círculos no mapa
- * - Voos → aeronaves ao vivo (OpenSky Network; não é FlightRadar24)
+ * Mapa Leaflet: bases, radar animado, grade Open-Meteo, focos INPE+FIRMS, DETER, voos.
  *
  * @module widgets/MapWidget
  */
@@ -27,9 +21,9 @@ import {
   fetchFlightRoute,
 } from '../api/providers/opensky.js';
 import { cacheGet, cacheSet } from '../services/cacheService.js';
-import { formatTemp, formatWind } from '../utils/units.js';
+import { formatTemp, formatWind, formatPressure } from '../utils/units.js';
 import { aqiLevel } from '../utils/weather.js';
-import { fireWeatherScore, fireWeatherMeta } from '../utils/survival.js';
+import { fireWeatherScore, fireWeatherMeta } from '../utils/weather.js';
 import { toastError, toastWarning } from '../services/toastService.js';
 
 const EMPTY_TILE =
@@ -58,6 +52,7 @@ export class MapWidget extends Widget {
     this.precipFcLayer = null;
     this.humidityLayer = null;
     this.feelsLayer = null;
+    this.pressureLayer = null;
     this.fireWxLayer = null;
     this.aqiLayer = null;
     this.firesLayer = null;
@@ -66,7 +61,6 @@ export class MapWidget extends Widget {
     this.prodesLayer = null;
     this._aqiAbort = null;
     this._controls = null;
-    this._legend = null;
     this._firesStatus = null;
     this._flightsStatus = null;
     this._firesAbort = null;
@@ -80,6 +74,16 @@ export class MapWidget extends Widget {
     this._flightTracks = new Map();
     this._flightsSource = 'OpenSky Network';
     this._flightsLastTick = 0;
+    /** @type {'all'|'inpe'|'firms'|'both'} */
+    this._fireSourceFilter = 'all';
+    this._fireDays = 1;
+    this._fireFilterBar = null;
+    /** @type {{ host: string, frames: object[], index: number, timer: number|null, playing: boolean, layer: object|null }|null} */
+    this._radarAnim = null;
+    this._radarTimeEl = null;
+    this._overlayOpacity = 0.7;
+    this._opacityInput = null;
+    this._baseKeys = ['osm', 'carto', 'cartoDark', 'opentopo', 'esriSat', 'esriTopo'];
   }
 
   update(data) {
@@ -94,6 +98,7 @@ export class MapWidget extends Widget {
 
   destroy() {
     this._stopFlightsLive();
+    this._stopRadarAnim();
     if (this._firesAbort) {
       this._firesAbort.abort();
       this._firesAbort = null;
@@ -132,20 +137,58 @@ export class MapWidget extends Widget {
     const controls = el('div', { className: 'map-layer-controls' }, [
       el('span', { className: 'map-layers-label', text: t('map_layers') }),
     ]);
-    const gBase = this._addLayerGroup(controls, t('map_group_base'));
-    const gWeather = this._addLayerGroup(controls, t('map_group_weather'));
-    const gRisk = this._addLayerGroup(controls, t('map_group_risk'));
-    const gTerritory = this._addLayerGroup(controls, t('map_group_territory'));
-    const gTraffic = this._addLayerGroup(controls, t('map_group_traffic'));
+    const gBase = this._addLayerGroup(controls, t('map_group_base'), true);
+    const gWeather = this._addLayerGroup(controls, t('map_group_weather'), true);
+    const gRisk = this._addLayerGroup(controls, t('map_group_risk'), true);
+    const gTerritory = this._addLayerGroup(controls, t('map_group_territory'), false);
+    const gTraffic = this._addLayerGroup(controls, t('map_group_traffic'), false);
 
-    this._legend = el('p', {
-      className: 'map-legend muted',
-      text: t('map_legend_hint'),
+    const tools = el('div', { className: 'map-tools-bar' });
+    this._opacityInput = el('input', {
+      type: 'range',
+      className: 'map-opacity-range',
+      min: '20',
+      max: '100',
+      value: String(Math.round(this._overlayOpacity * 100)),
+      title: t('map_opacity'),
+      'aria-label': t('map_opacity'),
     });
+    this._opacityInput.addEventListener('input', () => {
+      this._overlayOpacity = Number(this._opacityInput.value) / 100;
+      this._applyOverlayOpacity();
+    });
+    tools.append(
+      el('label', { className: 'map-tool-label', text: t('map_opacity') }, [this._opacityInput]),
+      el('button', {
+        type: 'button',
+        className: 'btn btn-sm map-tool-btn',
+        text: t('map_recenter'),
+        onClick: () => this._recenter(),
+      }),
+      el('button', {
+        type: 'button',
+        className: 'btn btn-sm map-tool-btn',
+        text: t('map_reload_layers'),
+        onClick: () => this._reloadActiveLayers(),
+      })
+    );
+
+    this._radarTimeEl = el('p', { className: 'map-radar-time muted hidden', text: '' });
+    this._fireFilterBar = el('div', { className: 'map-fire-filters hidden' });
+    this._buildFireFilters(this._fireFilterBar);
+
     this._firesStatus = el('p', { className: 'map-fires-status muted hidden', text: '' });
     this._flightsStatus = el('p', { className: 'map-flights-status muted hidden', text: '' });
     this._controls = controls;
-    this.body.append(controls, this._legend, this._firesStatus, this._flightsStatus, mapEl);
+    this.body.append(
+      controls,
+      tools,
+      this._radarTimeEl,
+      this._fireFilterBar,
+      this._firesStatus,
+      this._flightsStatus,
+      mapEl
+    );
 
     const loc = this.data.location;
     const lat = loc?.latitude ?? -23.55;
@@ -157,52 +200,42 @@ export class MapWidget extends Widget {
       maxZoom: 19,
     }).setView([lat, lon], 7);
 
-    // --- Bases (OSM × satélite óptico estilo Google Earth) ---
-    this.layers.osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      maxZoom: 19,
-      maxNativeZoom: 19,
-      minZoom: 2,
-      attribution: '&copy; OpenStreetMap',
-      errorTileUrl: EMPTY_TILE,
+    try {
+      L.control.scale({ imperial: false, metric: true, position: 'bottomleft' }).addTo(this.map);
+    } catch {
+      /* ignore */
+    }
+
+    this._initBaseLayers();
+
+    // Pin CSS (sem PNG) — evita quadrado quebrado do ícone padrão do Leaflet
+    this.marker = L.marker([lat, lon], {
+      icon: locationPinIcon(loc?.name || t('nav_map')),
+      zIndexOffset: 600,
+      title: loc?.name || '',
     }).addTo(this.map);
-
-    // Esri World Imagery — satélite óptico gratuito (não é Google; ToS Esri)
-    this.layers.esriSat = L.tileLayer(
-      'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-      {
-        maxZoom: 19,
-        maxNativeZoom: 19,
-        minZoom: 2,
-        attribution:
-          'Tiles &copy; Esri — Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community',
-        errorTileUrl: EMPTY_TILE,
-      }
-    );
-
-    // Nomes/limites sobre o satélite (híbrido)
-    this.layers.esriLabels = L.tileLayer(
-      'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',
-      {
-        maxZoom: 19,
-        maxNativeZoom: 19,
-        opacity: 0.95,
-        attribution: 'Esri',
-        errorTileUrl: EMPTY_TILE,
-        pane: 'overlayPane',
-      }
-    );
-
-    this.marker = L.marker([lat, lon]).addTo(this.map);
     if (loc?.name) {
       this.marker.bindPopup(loc.name).openPopup();
     }
 
     this._addLayerToggle(gBase, 'osm', t('layer_osm'), true, async (on) => {
       this._setBaseLayer('osm', on);
-    });
+    }, t('layer_osm_hint'));
+    this._addLayerToggle(gBase, 'carto', t('layer_carto'), false, async (on) => {
+      this._setBaseLayer('carto', on);
+    }, t('layer_carto_hint'));
+    this._addLayerToggle(gBase, 'cartoDark', t('layer_carto_dark'), false, async (on) => {
+      this._setBaseLayer('cartoDark', on);
+    }, t('layer_carto_dark_hint'));
+    this._addLayerToggle(gBase, 'opentopo', t('layer_opentopo'), false, async (on) => {
+      this._setBaseLayer('opentopo', on);
+    }, t('layer_opentopo_hint'));
     this._addLayerToggle(gBase, 'esriSat', t('layer_sat_basemap'), false, async (on) => {
       this._setBaseLayer('esriSat', on);
-    });
+    }, t('layer_sat_basemap_hint'));
+    this._addLayerToggle(gBase, 'esriTopo', t('layer_esri_topo'), false, async (on) => {
+      this._setBaseLayer('esriTopo', on);
+    }, t('layer_esri_topo_hint'));
     this._addLayerToggle(
       gBase,
       'esriLabels',
@@ -224,6 +257,7 @@ export class MapWidget extends Widget {
     this._loadRainViewer(gWeather);
     this._setupClouds(gWeather);
     this._setupTempWind(gWeather);
+    this._setupPressure(gWeather);
     this._setupPrecipForecast(gWeather);
     this._setupHumidityFeels(gWeather);
     this._setupLightning(gWeather);
@@ -232,79 +266,241 @@ export class MapWidget extends Widget {
     this._setupFires(gRisk);
     this._setupDeforestation(gTerritory);
     this._setupFlights(gTraffic);
-
     requestAnimationFrame(() => this.map?.invalidateSize());
   }
 
+  _initBaseLayers() {
+    const tileOpts = {
+      maxZoom: 19,
+      maxNativeZoom: 19,
+      minZoom: 2,
+      errorTileUrl: EMPTY_TILE,
+    };
+
+    this.layers.osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      ...tileOpts,
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+    }).addTo(this.map);
+
+    this.layers.carto = L.tileLayer(
+      'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
+      {
+        ...tileOpts,
+        subdomains: 'abcd',
+        attribution: '&copy; OSM &copy; <a href="https://carto.com/">CARTO</a>',
+      }
+    );
+
+    this.layers.cartoDark = L.tileLayer(
+      'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+      {
+        ...tileOpts,
+        subdomains: 'abcd',
+        attribution: '&copy; OSM &copy; <a href="https://carto.com/">CARTO</a>',
+      }
+    );
+
+    this.layers.opentopo = L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', {
+      ...tileOpts,
+      maxNativeZoom: 17,
+      attribution:
+        'Map data: &copy; OSM, SRTM | Map style: &copy; <a href="https://opentopomap.org">OpenTopoMap</a>',
+    });
+
+    this.layers.esriSat = L.tileLayer(
+      'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+      {
+        ...tileOpts,
+        attribution:
+          'Tiles &copy; Esri — Esri, Maxar, Earthstar Geographics, GIS User Community',
+      }
+    );
+
+    this.layers.esriTopo = L.tileLayer(
+      'https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}',
+      {
+        ...tileOpts,
+        attribution: 'Tiles &copy; Esri — World Topographic Map',
+      }
+    );
+
+    this.layers.esriLabels = L.tileLayer(
+      'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',
+      {
+        maxZoom: 19,
+        maxNativeZoom: 19,
+        opacity: 0.95,
+        attribution: 'Esri labels',
+        errorTileUrl: EMPTY_TILE,
+        pane: 'overlayPane',
+      }
+    );
+  }
+
   /**
-   * Grupo colapsável visual de camadas (Tempo / Risco / …).
    * @param {HTMLElement} parent
    * @param {string} title
-   * @returns {HTMLElement} host dos toggles
+   * @param {boolean} [open=true]
    */
-  _addLayerGroup(parent, title) {
-    const host = el('div', { className: 'map-layer-group-toggles' });
-    const block = el('div', { className: 'map-layer-group' }, [
-      el('span', { className: 'map-layer-group-title', text: title }),
+  _addLayerGroup(parent, title, open = true) {
+    const host = el('div', {
+      className: `map-layer-group-toggles${open ? '' : ' is-collapsed'}`,
+    });
+    const head = el('button', {
+      type: 'button',
+      className: 'map-layer-group-title',
+      text: title,
+      'aria-expanded': open ? 'true' : 'false',
+    });
+    head.addEventListener('click', () => {
+      const collapsed = host.classList.toggle('is-collapsed');
+      head.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+    });
+    const block = el('div', { className: `map-layer-group${open ? '' : ' group-collapsed'}` }, [
+      head,
       host,
     ]);
+    // keep title button styling: re-add class on block title via CSS for button
     parent.append(block);
     return host;
   }
 
+  _buildFireFilters(host) {
+    host.append(el('span', { className: 'map-filter-label', text: t('fires_filters') }));
+
+    const srcSel = el('select', {
+      className: 'map-filter-select',
+      'aria-label': t('fires_filter_source'),
+    });
+    for (const [val, label] of [
+      ['all', t('fires_filter_all')],
+      ['both', t('fires_filter_both')],
+      ['inpe', 'INPE'],
+      ['firms', 'FIRMS'],
+    ]) {
+      srcSel.append(el('option', { value: val, text: label }));
+    }
+    srcSel.value = this._fireSourceFilter;
+    srcSel.addEventListener('change', () => {
+      this._fireSourceFilter = /** @type {any} */ (srcSel.value);
+      if (this.map?.hasLayer(this.firesLayer)) {
+        this._loadFires();
+      }
+    });
+
+    const daySel = el('select', {
+      className: 'map-filter-select',
+      'aria-label': t('fires_filter_days'),
+    });
+    for (const d of [1, 2, 3, 5, 7]) {
+      daySel.append(el('option', { value: String(d), text: `${d}d` }));
+    }
+    daySel.value = String(this._fireDays);
+    daySel.addEventListener('change', () => {
+      this._fireDays = Number(daySel.value) || 1;
+      if (this.map?.hasLayer(this.firesLayer)) {
+        this._loadFires();
+      }
+    });
+
+    const refresh = el('button', {
+      type: 'button',
+      className: 'btn btn-sm',
+      text: t('fires_refresh'),
+      onClick: () => this._loadFires({ force: true }),
+    });
+
+    host.append(
+      el('label', { className: 'map-filter-field' }, [
+        el('span', { text: t('fires_filter_source') }),
+        srcSel,
+      ]),
+      el('label', { className: 'map-filter-field' }, [
+        el('span', { text: t('fires_filter_days') }),
+        daySel,
+      ]),
+      refresh
+    );
+  }
+
+  _recenter() {
+    const loc = this.data.location;
+    if (!this.map || !loc) {
+      return;
+    }
+    this.map.setView([loc.latitude, loc.longitude], Math.max(this.map.getZoom(), 8));
+    this.marker?.setLatLng([loc.latitude, loc.longitude]);
+  }
+
+  async _reloadActiveLayers() {
+    // limpa cache de grade/focos da sessão (chaves conhecidas)
+    if (this.map?.hasLayer(this.tempLayer) || this.map?.hasLayer(this.cloudsLayer)) {
+      await this._loadGrid({ force: true });
+    }
+    if (this.map?.hasLayer(this.aqiLayer)) {
+      await this._loadAqiGrid({ force: true });
+    }
+    if (this.map?.hasLayer(this.firesLayer)) {
+      await this._loadFires({ force: true });
+    }
+    if (this.map?.hasLayer(this.deterLayer)) {
+      await this._loadDeter();
+    }
+    if (this._flightsEnabled) {
+      await this._loadFlights({ silent: true });
+    }
+  }
+
+  _applyOverlayOpacity() {
+    const o = this._overlayOpacity;
+    for (const key of ['radar', 'satellite', 'lightning', 'prodes']) {
+      const layer = this.layers[key];
+      if (layer && typeof layer.setOpacity === 'function') {
+        layer.setOpacity(o);
+      }
+    }
+  }
+
   /**
-   * Alterna base OSM ↔ satélite óptico (só uma base “cheia” por vez).
-   * @param {'osm'|'esriSat'} which
+   * Uma base “cheia” por vez (OSM / Carto / Topo / Esri…).
+   * @param {string} which
    * @param {boolean} on
    */
   _setBaseLayer(which, on) {
     if (!this.map) {
       return;
     }
-    const osm = this.layers.osm;
-    const sat = this.layers.esriSat;
-    if (!osm || !sat) {
+    const keys = this._baseKeys;
+    const target = this.layers[which];
+    if (!target) {
       return;
     }
 
-    if (which === 'esriSat') {
-      if (on) {
-        if (this.map.hasLayer(osm)) {
-          this.map.removeLayer(osm);
-        }
-        sat.addTo(this.map);
-        sat.bringToBack();
-        // marca OSM desligado no checkbox
-        this._setCheckbox('osm', false);
-        // liga rótulos por padrão no híbrido se ainda não estiverem
-        if (this.layers.esriLabels && !this.map.hasLayer(this.layers.esriLabels)) {
-          this.layers.esriLabels.addTo(this.map);
-          this._setCheckbox('esriLabels', true);
-        }
-      } else {
-        this.map.removeLayer(sat);
-        if (!this.map.hasLayer(osm)) {
-          osm.addTo(this.map);
-          this._setCheckbox('osm', true);
-        }
-      }
-      return;
-    }
-
-    // OSM
     if (on) {
-      if (this.map.hasLayer(sat)) {
-        this.map.removeLayer(sat);
+      for (const k of keys) {
+        if (k === which) continue;
+        const lay = this.layers[k];
+        if (lay && this.map.hasLayer(lay)) {
+          this.map.removeLayer(lay);
+        }
+        this._setCheckbox(k, false);
       }
-      osm.addTo(this.map);
-      osm.bringToBack();
-      this._setCheckbox('esriSat', false);
+      target.addTo(this.map);
+      target.bringToBack();
+      this._setCheckbox(which, true);
+      if (which === 'esriSat' && this.layers.esriLabels && !this.map.hasLayer(this.layers.esriLabels)) {
+        this.layers.esriLabels.addTo(this.map);
+        this._setCheckbox('esriLabels', true);
+      }
     } else {
-      this.map.removeLayer(osm);
-      // se desligar OSM sem satélite, mantém satélite
-      if (!this.map.hasLayer(sat)) {
-        sat.addTo(this.map);
-        this._setCheckbox('esriSat', true);
+      this.map.removeLayer(target);
+      const anyBase = keys.some((k) => this.layers[k] && this.map.hasLayer(this.layers[k]));
+      if (!anyBase) {
+        const fallback = this.layers.osm || this.layers.carto;
+        if (fallback) {
+          fallback.addTo(this.map);
+          this._setCheckbox(fallback === this.layers.osm ? 'osm' : 'carto', true);
+        }
       }
     }
   }
@@ -365,6 +561,9 @@ export class MapWidget extends Widget {
       }
       if (on) {
         layer.addTo(this.map);
+        if (typeof layer.setOpacity === 'function' && !this._baseKeys.includes(key)) {
+          layer.setOpacity(this._overlayOpacity);
+        }
       } else {
         this.map.removeLayer(layer);
       }
@@ -390,46 +589,187 @@ export class MapWidget extends Widget {
       }
       const data = await res.json();
       const host = data.host || API.rainViewer.host;
-      const radarFrames = data.radar?.past || [];
+      const radarPast = data.radar?.past || [];
+      const radarNowcast = data.radar?.nowcast || [];
+      const radarFrames = [...radarPast, ...radarNowcast];
       const satFrames = data.satellite?.infrared || [];
       const nativeZoom = Number(data?.radar?.max_zoom) || RAINVIEWER_NATIVE_ZOOM;
 
-      // RADAR = precipitação (cores: chuva/neve)
       if (radarFrames.length) {
-        const frame = radarFrames[radarFrames.length - 1];
+        const last = radarFrames[radarFrames.length - 1];
         this.layers.radar = L.tileLayer(
-          `${host}${frame.path}/256/{z}/{x}/{y}/2/1_1.png`,
-          this._weatherTileOpts(nativeZoom, { opacity: 0.7, zIndex: 200 })
+          `${host}${last.path}/256/{z}/{x}/{y}/2/1_1.png`,
+          this._weatherTileOpts(nativeZoom, {
+            opacity: this._overlayOpacity,
+            zIndex: 200,
+            attribution: 'Radar &copy; <a href="https://www.rainviewer.com/">RainViewer</a>',
+          })
         );
+        this._radarAnim = {
+          host,
+          frames: radarFrames,
+          index: radarFrames.length - 1,
+          timer: null,
+          playing: false,
+          layer: this.layers.radar,
+          nativeZoom,
+        };
+
         this._addLayerToggle(
           controls,
           'radar',
           t('layer_radar'),
           false,
-          null,
+          async (on) => {
+            if (!this.map || !this.layers.radar) return;
+            if (on) {
+              this.layers.radar.addTo(this.map);
+              this.layers.radar.setOpacity(this._overlayOpacity);
+              this._showRadarTime();
+              this._startRadarAnim();
+            } else {
+              this._stopRadarAnim();
+              this.map.removeLayer(this.layers.radar);
+              if (this._radarTimeEl) {
+                this._radarTimeEl.classList.add('hidden');
+              }
+            }
+          },
           t('layer_radar_hint')
         );
+
+        // controles play/pause do radar
+        const animBar = el('div', { className: 'map-radar-controls' });
+        animBar.append(
+          el('button', {
+            type: 'button',
+            className: 'btn btn-sm',
+            text: '▶',
+            title: t('map_radar_play'),
+            onClick: () => {
+              if (!this.map?.hasLayer(this.layers.radar)) {
+                this._setCheckbox('radar', true);
+                this.layers.radar?.addTo(this.map);
+              }
+              this._startRadarAnim();
+            },
+          }),
+          el('button', {
+            type: 'button',
+            className: 'btn btn-sm',
+            text: '⏸',
+            title: t('map_radar_pause'),
+            onClick: () => this._stopRadarAnim(false),
+          }),
+          el('button', {
+            type: 'button',
+            className: 'btn btn-sm',
+            text: '⏭',
+            title: t('map_radar_latest'),
+            onClick: () => this._setRadarFrame(this._radarAnim.frames.length - 1),
+          })
+        );
+        controls.append(animBar);
       }
 
-      // SATÉLITE = infravermelho (nuvens vistas do espaço, tons cinza)
-      // Não reutilizamos radar aqui — era isso que fazia "nuvens" parecer igual.
       if (satFrames.length) {
         const frame = satFrames[satFrames.length - 1];
         this.layers.satellite = L.tileLayer(
           `${host}${frame.path}/256/{z}/{x}/{y}/0/0_0.png`,
-          this._weatherTileOpts(nativeZoom, { opacity: 0.75, zIndex: 150 })
+          this._weatherTileOpts(nativeZoom, {
+            opacity: this._overlayOpacity,
+            zIndex: 150,
+            attribution: 'IR &copy; RainViewer',
+          })
         );
         this._addLayerToggle(
           controls,
           'satellite',
           t('layer_satellite'),
           false,
-          null,
+          async (on) => {
+            if (!this.map || !this.layers.satellite) return;
+            if (on) {
+              this.layers.satellite.addTo(this.map);
+              this.layers.satellite.setOpacity(this._overlayOpacity);
+            } else {
+              this.map.removeLayer(this.layers.satellite);
+            }
+          },
           t('layer_satellite_hint')
         );
       }
     } catch (err) {
       console.warn('[MapWidget] RainViewer:', err);
+    }
+  }
+
+  _showRadarTime() {
+    if (!this._radarTimeEl || !this._radarAnim) return;
+    const fr = this._radarAnim.frames[this._radarAnim.index];
+    const ts = fr?.time ? new Date(fr.time * 1000) : null;
+    const label = ts
+      ? ts.toLocaleString(undefined, { hour: '2-digit', minute: '2-digit', day: '2-digit', month: 'short' })
+      : '—';
+    this._radarTimeEl.classList.remove('hidden');
+    this._radarTimeEl.textContent = `${t('map_radar_frame')}: ${label} (${this._radarAnim.index + 1}/${this._radarAnim.frames.length})`;
+  }
+
+  /**
+   * @param {number} index
+   */
+  _setRadarFrame(index) {
+    if (!this._radarAnim || !this.map) return;
+    const frames = this._radarAnim.frames;
+    if (!frames.length) return;
+    const i = ((index % frames.length) + frames.length) % frames.length;
+    this._radarAnim.index = i;
+    const fr = frames[i];
+    const url = `${this._radarAnim.host}${fr.path}/256/{z}/{x}/{y}/2/1_1.png`;
+    const wasOn = this.map.hasLayer(this.layers.radar);
+    if (wasOn) {
+      this.map.removeLayer(this.layers.radar);
+    }
+    this.layers.radar = L.tileLayer(
+      url,
+      this._weatherTileOpts(this._radarAnim.nativeZoom, {
+        opacity: this._overlayOpacity,
+        zIndex: 200,
+        attribution: 'Radar &copy; RainViewer',
+      })
+    );
+    this._radarAnim.layer = this.layers.radar;
+    if (wasOn) {
+      this.layers.radar.addTo(this.map);
+    }
+    this._showRadarTime();
+  }
+
+  _startRadarAnim() {
+    if (!this._radarAnim) return;
+    this._stopRadarAnim(false);
+    this._radarAnim.playing = true;
+    this._showRadarTime();
+    this._radarAnim.timer = window.setInterval(() => {
+      if (!this._radarAnim) return;
+      const next = (this._radarAnim.index + 1) % this._radarAnim.frames.length;
+      this._setRadarFrame(next);
+    }, 700);
+  }
+
+  /**
+   * @param {boolean} [hideTime=true]
+   */
+  _stopRadarAnim(hideTime = true) {
+    if (this._radarAnim?.timer) {
+      clearInterval(this._radarAnim.timer);
+      this._radarAnim.timer = null;
+    }
+    if (this._radarAnim) {
+      this._radarAnim.playing = false;
+    }
+    if (hideTime && this._radarTimeEl) {
+      this._radarTimeEl.classList.add('hidden');
     }
   }
 
@@ -510,6 +850,28 @@ export class MapWidget extends Widget {
         }
       },
       t('layer_precip_forecast_hint')
+    );
+  }
+
+  _setupPressure(controls) {
+    this.pressureLayer = L.layerGroup();
+    this.layers.pressureMap = this.pressureLayer;
+
+    this._addLayerToggle(
+      controls,
+      'pressureMap',
+      t('layer_pressure_map'),
+      false,
+      async (on) => {
+        if (!this.map) return;
+        if (on) {
+          await this._loadGrid();
+          this.pressureLayer.addTo(this.map);
+        } else {
+          this.map.removeLayer(this.pressureLayer);
+        }
+      },
+      t('layer_pressure_map_hint')
     );
   }
 
@@ -606,7 +968,10 @@ export class MapWidget extends Widget {
     );
   }
 
-  async _loadAqiGrid() {
+  /**
+   * @param {{ force?: boolean }} [opts]
+   */
+  async _loadAqiGrid(opts = {}) {
     const loc = this.data.location;
     if (!loc || !this.aqiLayer) {
       return;
@@ -615,8 +980,8 @@ export class MapWidget extends Widget {
       this._aqiAbort.abort();
     }
     this._aqiAbort = new AbortController();
-    const key = `mapaqi:${loc.latitude.toFixed(2)},${loc.longitude.toFixed(2)}`;
-    let points = cacheGet(key);
+    const key = `mapaqi:v2:${loc.latitude.toFixed(2)},${loc.longitude.toFixed(2)}`;
+    let points = opts.force ? null : cacheGet(key);
     if (!points) {
       try {
         points = await fetchAirQualityGrid(
@@ -670,10 +1035,12 @@ export class MapWidget extends Widget {
           return;
         }
         if (on) {
+          this._fireFilterBar?.classList.remove('hidden');
           await this._loadFires();
           this.firesLayer.addTo(this.map);
         } else {
           this.map.removeLayer(this.firesLayer);
+          this._fireFilterBar?.classList.add('hidden');
           if (this._firesStatus) {
             this._firesStatus.classList.add('hidden');
           }
@@ -683,7 +1050,10 @@ export class MapWidget extends Widget {
     );
   }
 
-  async _loadFires() {
+  /**
+   * @param {{ force?: boolean }} [opts]
+   */
+  async _loadFires(opts = {}) {
     if (this._firesAbort) {
       this._firesAbort.abort();
     }
@@ -714,10 +1084,16 @@ export class MapWidget extends Widget {
     }
 
     try {
+      if (opts.force) {
+        // força bypass de cache alterando levemente o bbox
+        box.west -= 0.001;
+      }
       const result = await fetchFireHotspots({
         ...box,
         lat,
         lon,
+        days: this._fireDays,
+        sourceFilter: this._fireSourceFilter,
         signal: this._firesAbort.signal,
       });
 
@@ -759,12 +1135,15 @@ export class MapWidget extends Widget {
         parts.push(`${t('fires_both')} ${result.countBoth}`);
       }
       if (this._firesStatus) {
+        const filt =
+          this._fireSourceFilter !== 'all'
+            ? ` · ${t('fires_filter_source')}: ${this._fireSourceFilter}`
+            : '';
         this._firesStatus.textContent =
           result.count === 0
-            ? t('fires_none')
-            : `${t('fires_count')}: ${result.count}${parts.length ? ` (${parts.join(' · ')})` : ''} · ${result.source}`;
+            ? `${t('fires_none')}${filt} · ${this._fireDays}d`
+            : `${t('fires_count')}: ${result.count}${parts.length ? ` (${parts.join(' · ')})` : ''}${filt} · ${this._fireDays}d · ${result.source}`;
       }
-      // sem toast em sucesso — status no mapa já informa (mais leve)
     } catch (err) {
       if (err?.name === 'AbortError') {
         return;
@@ -1135,9 +1514,12 @@ export class MapWidget extends Widget {
    * @param {{ silent?: boolean }} [opts]
    */
   async _loadFlights(opts = {}) {
-    if (!this.map || !this.flightsLayer) {
+    if (!this.map || !this.flightsLayer || !this._flightsEnabled) {
       return;
     }
+    // gera id da requisição — respostas antigas abortadas são ignoradas
+    this._flightsLoadGen = (this._flightsLoadGen || 0) + 1;
+    const gen = this._flightsLoadGen;
     if (this._flightsAbort) {
       this._flightsAbort.abort();
     }
@@ -1151,9 +1533,11 @@ export class MapWidget extends Widget {
     let box;
     try {
       const b = this.map.getBounds();
-      // margem para não “sumir” avião na borda enquanto anima
-      const padLat = (b.getNorth() - b.getSouth()) * 0.12;
-      const padLon = (b.getEast() - b.getWest()) * 0.12;
+      // margem + área mínima (zoom muito aberto/fechado)
+      let padLat = (b.getNorth() - b.getSouth()) * 0.15;
+      let padLon = (b.getEast() - b.getWest()) * 0.15;
+      padLat = Math.max(padLat, 0.35);
+      padLon = Math.max(padLon, 0.35);
       box = {
         west: b.getWest() - padLon,
         south: b.getSouth() - padLat,
@@ -1162,7 +1546,7 @@ export class MapWidget extends Widget {
       };
     } catch {
       const c = this.map.getCenter();
-      const d = 1.5;
+      const d = 2;
       box = {
         west: c.lng - d,
         south: c.lat - d,
@@ -1176,17 +1560,19 @@ export class MapWidget extends Widget {
         ...box,
         signal: this._flightsAbort.signal,
       });
+      if (gen !== this._flightsLoadGen || !this._flightsEnabled) {
+        return;
+      }
 
       this._flightsSource = result.source || 'OpenSky Network';
       const seen = new Set();
       for (const f of result.flights) {
-        if (!f.icao24) {
+        if (!f.icao24 || f.latitude == null || f.longitude == null) {
           continue;
         }
         seen.add(f.icao24);
         this._upsertFlightTrack(f, this._flightsSource);
       }
-      // marca quem sumiu deste poll (prune depois de stale)
       const now = Date.now();
       for (const [id, tr] of this._flightTracks) {
         if (seen.has(id)) {
@@ -1195,8 +1581,12 @@ export class MapWidget extends Widget {
       }
       this._pruneStaleFlights();
       this._updateFlightsStatusCount();
+      // garante camada no mapa (caso tenha sido removida por engano)
+      if (this.flightsLayer && !this.map.hasLayer(this.flightsLayer)) {
+        this.flightsLayer.addTo(this.map);
+      }
     } catch (err) {
-      if (err?.name === 'AbortError') {
+      if (err?.name === 'AbortError' || gen !== this._flightsLoadGen) {
         return;
       }
       console.warn('[MapWidget] flights', err);
@@ -1390,29 +1780,34 @@ export class MapWidget extends Widget {
     }
   }
 
-  async _loadGrid() {
+  /**
+   * @param {{ force?: boolean }} [opts]
+   */
+  async _loadGrid(opts = {}) {
     const loc = this.data.location;
     if (!loc) {
       return;
     }
-    const key = `mapgrid:v3:${loc.latitude.toFixed(2)},${loc.longitude.toFixed(2)}`;
-    let points = cacheGet(key);
+    const key = `mapgrid:v4:${loc.latitude.toFixed(2)},${loc.longitude.toFixed(2)}`;
+    let points = opts.force ? null : cacheGet(key);
     if (!points) {
       try {
         points = await fetchMapGrid(loc.latitude, loc.longitude);
         cacheSet(key, points, CACHE_TTL.mapGrid);
       } catch (err) {
         console.warn('[MapWidget] grid', err);
+        toastError(t('map_grid_error'));
         return;
       }
     }
 
-    this.tempLayer.clearLayers();
-    this.windLayer.clearLayers();
+    this.tempLayer?.clearLayers();
+    this.windLayer?.clearLayers();
     this.cloudsLayer?.clearLayers();
     this.precipFcLayer?.clearLayers();
     this.humidityLayer?.clearLayers();
     this.feelsLayer?.clearLayers();
+    this.pressureLayer?.clearLayers();
     this.fireWxLayer?.clearLayers();
 
     for (const p of points) {
@@ -1538,6 +1933,23 @@ export class MapWidget extends Widget {
         );
         this.fireWxLayer.addLayer(circle);
       }
+
+      if (p.pressure != null && this.pressureLayer) {
+        const pr = p.pressure;
+        const circle = L.circleMarker([p.latitude, p.longitude], {
+          radius: 10,
+          color: '#fff',
+          weight: 1,
+          fillColor: pressureColor(pr),
+          fillOpacity: 0.7,
+        });
+        circle.bindTooltip(`${t('pressure')}: ${formatPressure(pr, 0)}`, {
+          permanent: true,
+          direction: 'center',
+          className: 'temp-tip',
+        });
+        this.pressureLayer.addLayer(circle);
+      }
     }
   }
 
@@ -1549,6 +1961,7 @@ export class MapWidget extends Widget {
     this.map.setView([loc.latitude, loc.longitude], this.map.getZoom());
     if (this.marker) {
       this.marker.setLatLng([loc.latitude, loc.longitude]);
+      this.marker.setIcon(locationPinIcon(loc.name || t('nav_map')));
       if (loc.name) {
         this.marker.bindPopup(loc.name);
       }
@@ -1646,6 +2059,41 @@ function humidityColor(h) {
     return '#22d3ee';
   }
   return '#2563eb';
+}
+
+/** Pressão msl hPa */
+function pressureColor(hpa) {
+  if (hpa < 1000) {
+    return '#7c3aed';
+  }
+  if (hpa < 1010) {
+    return '#3b82f6';
+  }
+  if (hpa < 1020) {
+    return '#22c55e';
+  }
+  if (hpa < 1030) {
+    return '#eab308';
+  }
+  return '#f97316';
+}
+
+/**
+ * Marcador de localização sem PNG (evita ícone quebrado / path errado).
+ * @param {string} [title]
+ */
+function locationPinIcon(title = '') {
+  const safe = String(title || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/"/g, '&quot;');
+  return L.divIcon({
+    className: 'loc-pin-marker',
+    html: `<div class="loc-pin" title="${safe}" aria-hidden="true"><span class="loc-pin-dot"></span></div>`,
+    iconSize: [28, 40],
+    iconAnchor: [14, 38],
+    popupAnchor: [0, -34],
+  });
 }
 
 /**

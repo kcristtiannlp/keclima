@@ -85,7 +85,16 @@ export async function render(path) {
         outlet._teardown = null;
       }
     }
+  } catch (err) {
+    console.error('[Router] page:', err);
+    outlet.innerHTML = '';
+    const msg = document.createElement('div');
+    msg.className = 'boot-error page-panel';
+    msg.innerHTML = `<p>Falha ao carregar a página.</p><pre>${String(err?.message || err)}</pre>`;
+    outlet.append(msg);
   } finally {
+    // reflow para reativar animação de entrada
+    void outlet.offsetWidth;
     outlet.classList.remove('page-loading');
   }
 

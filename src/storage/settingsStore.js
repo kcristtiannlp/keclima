@@ -51,11 +51,6 @@ export function sanitizeWidgetOrder(saved) {
       seen.add(id);
     }
   }
-  // Novos painéis do cerne (ex.: situação) entram no topo se ainda não estavam salvos
-  if (catalog.includes('survival') && !seen.has('survival')) {
-    out.unshift('survival');
-    seen.add('survival');
-  }
   return out.length ? out : [...DEFAULT_SETTINGS.widgetOrder];
 }
 

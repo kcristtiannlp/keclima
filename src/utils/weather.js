@@ -218,6 +218,45 @@ export function buildAlerts(weather, airQuality, extra = {}) {
 }
 
 /**
+ * Índice heurístico de risco de fogo-meteo (0–100). Usado no mapa.
+ * @param {number|null} tempC
+ * @param {number|null} rh
+ * @param {number|null} windKmh
+ */
+export function fireWeatherScore(tempC, rh, windKmh) {
+  if (tempC == null && rh == null && windKmh == null) {
+    return 0;
+  }
+  const tVal = tempC ?? 20;
+  const h = rh ?? 50;
+  const w = windKmh ?? 5;
+  let s = Math.max(0, (tVal - 18) * 2.2);
+  s += Math.max(0, (55 - h) * 1.1);
+  s += Math.min(25, w * 0.45);
+  return Math.max(0, Math.min(100, Math.round(s)));
+}
+
+/**
+ * @param {number} score
+ * @returns {{ color: string, labelKey: string }}
+ */
+export function fireWeatherMeta(score) {
+  if (score >= 75) {
+    return { color: '#7f1d1d', labelKey: 'surv_fw_extreme' };
+  }
+  if (score >= 55) {
+    return { color: '#ef4444', labelKey: 'surv_fw_high' };
+  }
+  if (score >= 40) {
+    return { color: '#f97316', labelKey: 'surv_fw_moderate' };
+  }
+  if (score >= 25) {
+    return { color: '#eab308', labelKey: 'surv_fw_elevated' };
+  }
+  return { color: '#22c55e', labelKey: 'surv_fw_low' };
+}
+
+/**
  * @param {Object|null} weather
  * @returns {'day'|'night'|'rain'|'storm'}
  */

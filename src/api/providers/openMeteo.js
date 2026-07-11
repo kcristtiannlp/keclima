@@ -143,11 +143,13 @@ export async function fetchArchiveDaily(latitude, longitude, days, signal) {
  * @param {AbortSignal} [signal]
  */
 export async function fetchMapGrid(latitude, longitude, signal) {
-  const step = 0.45;
+  // Grade 7×7 (~0.35°) — mais detalhe sem estourar a API
+  const step = 0.35;
+  const span = 3;
   const lats = [];
   const lons = [];
-  for (let i = -2; i <= 2; i++) {
-    for (let j = -2; j <= 2; j++) {
+  for (let i = -span; i <= span; i++) {
+    for (let j = -span; j <= span; j++) {
       lats.push(latitude + i * step);
       lons.push(longitude + j * step);
     }
@@ -156,9 +158,18 @@ export async function fetchMapGrid(latitude, longitude, signal) {
   const params = new URLSearchParams({
     latitude: lats.join(','),
     longitude: lons.join(','),
-    current:
-      'temperature_2m,apparent_temperature,relative_humidity_2m,wind_speed_10m,wind_direction_10m,weather_code,cloud_cover',
-    hourly: 'precipitation',
+    current: [
+      'temperature_2m',
+      'apparent_temperature',
+      'relative_humidity_2m',
+      'wind_speed_10m',
+      'wind_direction_10m',
+      'weather_code',
+      'cloud_cover',
+      'pressure_msl',
+      'precipitation',
+    ].join(','),
+    hourly: 'precipitation,precipitation_probability',
     forecast_days: '1',
     wind_speed_unit: 'kmh',
     timezone: 'auto',
@@ -168,6 +179,7 @@ export async function fetchMapGrid(latitude, longitude, signal) {
     signal,
     headers: { Accept: 'application/json' },
     retries: 1,
+    timeoutMs: 35000,
   });
   if (!res.ok) {
     throw new Error(`Open-Meteo grid HTTP ${res.status}`);
@@ -185,6 +197,8 @@ export async function fetchMapGrid(latitude, longitude, signal) {
     windDirection: item.current?.wind_direction_10m ?? null,
     weatherCode: item.current?.weather_code ?? null,
     cloudCover: item.current?.cloud_cover ?? null,
+    pressure: item.current?.pressure_msl ?? null,
+    precipitation: item.current?.precipitation ?? null,
     precipitationNext6h: sumNextHoursPrecip(item.hourly, now, 6),
   }));
 }

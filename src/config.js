@@ -11,7 +11,7 @@
 /** @typedef {'24h' | '7d' | '30d' | '365d'} ChartRange */
 
 export const APP_NAME = 'KeClima';
-export const APP_VERSION = '0.5.0';
+export const APP_VERSION = '0.6.0';
 
 export const API = {
   openMeteo: {
@@ -22,7 +22,7 @@ export const API = {
   nominatim: {
     search: 'https://nominatim.openstreetmap.org/search',
     reverse: 'https://nominatim.openstreetmap.org/reverse',
-    userAgent: 'KeClima/0.5 (weather-pwa; contact: local)',
+    userAgent: 'KeClima/0.6 (weather-pwa; contact: local)',
     minIntervalMs: 1100,
   },
   rainViewer: {
@@ -92,10 +92,10 @@ export const DEFAULT_SETTINGS = {
    */
   /** Default enxuto — mapa/compare/sources opcionais via Personalizar */
   widgetOrder: [
-    'survival',
     'temperature',
     'inmet',
     'conditions',
+    'map',
     'humidity',
     'pressure',
     'wind',
@@ -103,13 +103,13 @@ export const DEFAULT_SETTINGS = {
     'aqi',
     'alerts',
     'forecast',
+    'sources',
   ],
   /**
    * Tamanho de cada painel no dashboard: s | m | l
    * s = 1 coluna, m = 2 colunas, l = largura total (+ altura maior no mapa)
    */
   widgetSizes: {
-    survival: 'l',
     temperature: 'm',
     inmet: 'l',
     conditions: 'm',
@@ -122,7 +122,7 @@ export const DEFAULT_SETTINGS = {
     moon: 's',
     alerts: 'm',
     forecast: 'l',
-    map: 'm',
+    map: 'l',
     compare: 'l',
     sources: 'l',
     deforestation: 'l',
@@ -131,7 +131,6 @@ export const DEFAULT_SETTINGS = {
 
 /** Todos os painéis que podem ir no dashboard (incluir/excluir). */
 export const WIDGET_CATALOG = [
-  'survival',
   'temperature',
   'inmet',
   'conditions',
@@ -169,7 +168,6 @@ export const ROUTES = {
   dashboard: '/',
   map: '/mapa',
   charts: '/graficos',
-  survival: '/preparacao',
   favorites: '/favoritos',
   history: '/historico',
   settings: '/configuracoes',

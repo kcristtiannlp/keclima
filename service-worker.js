@@ -2,7 +2,7 @@
  * KeClima Service Worker – shell completo + runtime inteligente.
  */
 
-const CACHE_VERSION = 'keclima-v0.5.0';
+const CACHE_VERSION = 'keclima-v0.6.0';
 const SHELL_CACHE = `${CACHE_VERSION}-shell`;
 const RUNTIME_CACHE = `${CACHE_VERSION}-runtime`;
 const API_CACHE = `${CACHE_VERSION}-api`;
@@ -27,7 +27,7 @@ const SHELL_ASSETS = [
   './src/config.js',
   './src/core/EventBus.js',
   './src/core/State.js',
-  './src/data/survivalKits.js',
+  './src/data/mapCatalog.js',
   './src/main.js',
   './src/pages/AboutPage.js',
   './src/pages/ChartsPage.js',
@@ -36,7 +36,6 @@ const SHELL_ASSETS = [
   './src/pages/HistoryPage.js',
   './src/pages/MapPage.js',
   './src/pages/SettingsPage.js',
-  './src/pages/SurvivalPage.js',
   './src/router.js',
   './src/services/cacheService.js',
   './src/services/locationService.js',
@@ -52,7 +51,6 @@ const SHELL_ASSETS = [
   './src/utils/dom.js',
   './src/utils/fetchRetry.js',
   './src/utils/i18n.js',
-  './src/utils/survival.js',
   './src/utils/units.js',
   './src/utils/weather.js',
   './src/widgets/AQIWidget.js',
@@ -69,7 +67,6 @@ const SHELL_ASSETS = [
   './src/widgets/PressureWidget.js',
   './src/widgets/SourcesWidget.js',
   './src/widgets/SunWidget.js',
-  './src/widgets/SurvivalWidget.js',
   './src/widgets/TemperatureWidget.js',
   './src/widgets/UVWidget.js',
   './src/widgets/Widget.js',
@@ -83,6 +80,11 @@ const SHELL_ASSETS = [
   './public/vendor/leaflet/marker-icon-2x.png',
   './public/vendor/leaflet/marker-icon.png',
   './public/vendor/leaflet/marker-shadow.png',
+  './public/vendor/leaflet/images/layers.png',
+  './public/vendor/leaflet/images/layers-2x.png',
+  './public/vendor/leaflet/images/marker-icon.png',
+  './public/vendor/leaflet/images/marker-icon-2x.png',
+  './public/vendor/leaflet/images/marker-shadow.png',
 ];
 
 self.addEventListener('install', (event) => {

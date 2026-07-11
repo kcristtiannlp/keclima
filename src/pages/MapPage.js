@@ -1,5 +1,5 @@
 /**
- * Página do mapa em tela cheia.
+ * Página do mapa em tela cheia (fluida).
  * @module pages/MapPage
  */
 
@@ -12,7 +12,7 @@ import { MapWidget } from '../widgets/MapWidget.js';
  * @param {HTMLElement} container
  */
 export async function renderMapPage(container) {
-  const wrap = el('div', { className: 'page-map' });
+  const wrap = el('div', { className: 'page-map page-map-full' });
   container.append(wrap);
 
   const mapWidget = new MapWidget(getState());
@@ -31,13 +31,20 @@ export async function renderMapPage(container) {
     EventBus.on(Events.WEATHER_UPDATED, sync),
   ];
 
-  // ensure size after layout
-  setTimeout(() => {
-    mapWidget.map?.invalidateSize();
-  }, 100);
+  // Layout estável após paint (mobile + sticky header)
+  const resize = () => mapWidget.map?.invalidateSize();
+  requestAnimationFrame(() => {
+    resize();
+    setTimeout(resize, 80);
+    setTimeout(resize, 280);
+  });
+  window.addEventListener('resize', resize, { passive: true });
+  window.addEventListener('orientationchange', resize, { passive: true });
 
   container._teardown = () => {
     unsubs.forEach((u) => u());
+    window.removeEventListener('resize', resize);
+    window.removeEventListener('orientationchange', resize);
     mapWidget.destroy();
   };
 }

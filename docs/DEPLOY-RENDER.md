@@ -31,7 +31,7 @@ Abra no navegador:
 
 | URL | Esperado |
 |-----|----------|
-| `https://SEU-APP.onrender.com/api/health` | `{"ok":true,"version":"0.5.0",...}` |
+| `https://SEU-APP.onrender.com/api/health` | `{"ok":true,"version":"0.6.0",...}` |
 | `https://SEU-APP.onrender.com/` | App KeClima |
 | Dashboard → focos / INMET / desmate | Dados BR (podem demorar no cold start free) |
 

@@ -33,7 +33,6 @@ export async function renderAboutPage(container) {
         el('li', { text: 'INPE Queimadas + NASA FIRMS (focos de calor unificados)' }),
         el('li', { text: 'INPE DETER / PRODES via TerraBrasilis (desmatamento)' }),
         el('li', { text: 'OpenSky + hexdb/adsbdb (voos / aeronave)' }),
-        el('li', { text: t('surv_title') + ' — motor local de ameaças + checklists offline' }),
         el('li', { text: 'Links: avisos INMET · Defesa Civil · Queimadas' }),
         el('li', { text: 'Leaflet + Chart.js' }),
       ]),

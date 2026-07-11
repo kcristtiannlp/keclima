@@ -15,7 +15,7 @@
     <link rel="apple-touch-icon" href="./public/assets/icons/icon-192.png" />
     <!-- Libs locais (offline / sem CDN) -->
     <link rel="stylesheet" href="./public/vendor/leaflet/leaflet.css" />
-    <link rel="stylesheet" href="./src/styles/main.css?v=0.5.0" />
+    <link rel="stylesheet" href="./src/styles/main.css?v=0.6.0" />
   </head>
   <body>
     <div id="splash" aria-hidden="true">
@@ -32,17 +32,38 @@
     <script src="./public/vendor/leaflet/leaflet.js"></script>
     <script src="./public/vendor/chartjs/chart.umd.min.js"></script>
     <script>
-      // Ícones Leaflet apontando para pasta local (não CDN)
+      // Ícones Leaflet: caminho absoluto a partir da raiz do site (evita ícone quebrado)
       (function () {
         if (typeof L === 'undefined' || !L.Icon || !L.Icon.Default) return;
+        var base = (function () {
+          try {
+            var path = location.pathname || '/';
+            // se abrir .../index.html, sobe para a pasta do app
+            if (/index\.html$/i.test(path)) {
+              path = path.replace(/index\.html$/i, '');
+            }
+            if (!path.endsWith('/')) {
+              path = path.replace(/[^/]+$/, '');
+            }
+            return path || '/';
+          } catch (e) {
+            return '/';
+          }
+        })();
+        var img = base + 'public/vendor/leaflet/images/';
+        L.Icon.Default.imagePath = img;
         L.Icon.Default.mergeOptions({
-          iconUrl: './public/vendor/leaflet/marker-icon.png',
-          iconRetinaUrl: './public/vendor/leaflet/marker-icon-2x.png',
-          shadowUrl: './public/vendor/leaflet/marker-shadow.png',
+          iconUrl: img + 'marker-icon.png',
+          iconRetinaUrl: img + 'marker-icon-2x.png',
+          shadowUrl: img + 'marker-shadow.png',
+          iconSize: [25, 41],
+          iconAnchor: [12, 41],
+          popupAnchor: [1, -34],
+          shadowSize: [41, 41],
         });
       })();
     </script>
-    <script type="module" src="./src/main.js?v=0.5.0"></script>
+    <script type="module" src="./src/main.js?v=0.6.0"></script>
     <script>
       setTimeout(function () {
         var s = document.getElementById('splash');
