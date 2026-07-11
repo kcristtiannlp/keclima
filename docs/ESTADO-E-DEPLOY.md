@@ -50,6 +50,9 @@ Clima Open-Meteo, mapa base, gráficos, preparação offline e PWA funcionam tam
 
 ### Checklist deploy (PaaS)
 
+- [x] Repo git local (`main`, commit v0.5.0)
+- [x] `Procfile` / `render.yaml` / `Dockerfile` / `scripts/smoke_test.sh`
+- [x] Guia: `docs/DEPLOY-RENDER.md`
 - [ ] Repositório no GitHub (ou upload zip no painel)
 - [ ] Criar Web Service / Blueprint (`render.yaml` no Render)
 - [ ] Start command: `python3 serve.py`
