@@ -95,7 +95,7 @@ export class DeforestationWidget extends Widget {
       this.body.append(
         el('p', { className: 'muted', text: t('deforestation_error') }),
         el('p', { className: 'metric-sub', text: t('deforestation_proxy_hint') }),
-        linksBlock(defaultLinks())
+        linksBlock(defaultLinks(this.data.location), false)
       );
       return;
     }
@@ -109,7 +109,7 @@ export class DeforestationWidget extends Widget {
     if (d.inBrazil === false) {
       this.body.append(
         el('p', { className: 'muted', text: t('deforestation_outside') }),
-        linksBlock(d.links || defaultLinks())
+        linksBlock(d.links || defaultLinks(this.data.location), false)
       );
       return;
     }
@@ -179,20 +179,22 @@ export class DeforestationWidget extends Widget {
 
     this.body.append(
       el('p', { className: 'metric-sub', text: d.source || 'INPE DETER' }),
-      linksBlock(d.links || defaultLinks())
+      linksBlock(d.links || defaultLinks(this.data.location), true)
     );
   }
 }
 
-function linksBlock(links) {
+function linksBlock(links, isBrazil = true) {
   const L = links || defaultLinks();
   return el('div', { className: 'official-links' }, [
     el('p', { className: 'official-links-title', text: t('deforestation_links') }),
     el('div', { className: 'official-links-row' }, [
-      link(L.terrabrasilis, t('link_terrabrasilis')),
-      link(L.deterAmazon || L.deterCerrado || L.deter, t('link_deter')),
-      link(L.prodes, t('link_prodes')),
-    ]),
+      isBrazil ? link(L.terrabrasilis, t('link_terrabrasilis')) : null,
+      isBrazil ? link(L.deterAmazon || L.deterCerrado || L.deter, t('link_deter')) : null,
+      isBrazil ? link(L.prodes, t('link_prodes')) : null,
+      isBrazil ? link(L.mapbiomas, 'MapBiomas Alerta') : null,
+      link(L.gfw, 'Global Forest Watch'),
+    ].filter(Boolean)),
   ]);
 }
 
@@ -209,10 +211,17 @@ function link(href, label) {
   });
 }
 
-function defaultLinks() {
-  return {
+function defaultLinks(loc) {
+  const base = {
     terrabrasilis: 'https://terrabrasilis.dpi.inpe.br/',
     deterAmazon: 'https://terrabrasilis.dpi.inpe.br/app/dashboard/alerts/legal/amazon/daily/',
     prodes: 'https://terrabrasilis.dpi.inpe.br/app/map/deforestation/',
+    mapbiomas: 'https://plataforma.alerta.mapbiomas.org/',
   };
+  if (loc) {
+    base.gfw = `https://www.globalforestwatch.org/map/?map=8/${loc.latitude.toFixed(2)}/${loc.longitude.toFixed(2)}`;
+  } else {
+    base.gfw = 'https://www.globalforestwatch.org/map/';
+  }
+  return base;
 }
