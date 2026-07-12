@@ -1509,7 +1509,91 @@ class Handler(SimpleHTTPRequestHandler):
             auth_b64 = base64.b64encode(auth_str.encode("utf-8")).decode("utf-8")
             extra_headers["Authorization"] = f"Basic {auth_b64}"
 
-        # Integração ADSB.lol (unfiltered & open) para consultas regionais/área
+        def try_adsb_lol_fallback():
+            lat = (south + north) / 2.0
+            lon = (west + east) / 2.0
+            r_km = haversine_km(lat, lon, north, east)
+            radius_nm = max(15, min(250, int(r_km / 1.852) + 10))
+            adsb_url = f"https://api.adsb.lol/v2/point/{lat:.4f}/{lon:.4f}/{radius_nm}"
+            try:
+                st, bd = fetch_url(
+                    adsb_url,
+                    timeout=15,
+                    accept="application/json",
+                    extra_headers={"User-Agent": "KeClima/0.6 (weather-pwa; adsb-proxy)"},
+                )
+                if st == 200 and bd:
+                    raw = json.loads(bd.decode("utf-8", errors="replace"))
+                    ac_list = raw.get("ac") or []
+                    f_list = []
+                    for ac in ac_list:
+                        item_lat = ac.get("lat")
+                        item_lon = ac.get("lon")
+                        if item_lat is None or item_lon is None:
+                            continue
+                        try:
+                            lat_f = float(item_lat)
+                            lon_f = float(item_lon)
+                        except (TypeError, ValueError):
+                            continue
+                        if not (south <= lat_f <= north and west <= lon_f <= east):
+                            continue
+
+                        alt_baro = ac.get("alt_baro")
+                        on_ground = alt_baro == "ground"
+
+                        alt_m = None
+                        if alt_baro is not None and not on_ground:
+                            try:
+                                alt_m = float(alt_baro) * 0.3048
+                            except (TypeError, ValueError):
+                                pass
+
+                        gs = ac.get("gs")
+                        vel_ms = None
+                        if gs is not None:
+                            try:
+                                vel_ms = float(gs) * 0.514444
+                            except (TypeError, ValueError):
+                                pass
+
+                        callsign = (ac.get("flight") or "").strip() or None
+                        if not callsign and ac.get("r"):
+                            callsign = ac.get("r").strip()
+
+                        f_list.append(
+                            {
+                                "icao24": ac.get("hex", "").strip().lower(),
+                                "callsign": callsign,
+                                "originCountry": None,
+                                "longitude": lon_f,
+                                "latitude": lat_f,
+                                "altitudeM": alt_m,
+                                "geoAltitudeM": None,
+                                "onGround": on_ground,
+                                "velocityMs": vel_ms,
+                                "trackDeg": float(ac.get("track", 0)) if ac.get("track") is not None else None,
+                                "verticalRateMs": None,
+                                "squawk": ac.get("squawk"),
+                            }
+                        )
+                    max_n = 2500
+                    payload = {
+                        "time": int(time.time()),
+                        "count": len(f_list[:max_n]),
+                        "flights": f_list[:max_n],
+                        "source": "ADSB.lol (Fallback)",
+                        "bbox": {"west": west, "south": south, "east": east, "north": north},
+                        "truncated": len(f_list) > max_n,
+                        "scope": "bbox_fallback",
+                    }
+                    cache_set(cache_key, payload)
+                    return payload
+            except Exception:  # noqa: BLE001
+                pass
+            return None
+
+        # Integração ADSB.lol (unfiltered & open) para todos os zoom levels
         adsb_success = False
         flights_all = []
 
@@ -1645,7 +1729,7 @@ class Handler(SimpleHTTPRequestHandler):
                 extra_headers=extra_headers,
             )
         except Exception as exc:  # noqa: BLE001
-            fb = get_stale_fallback()
+            fb = get_stale_fallback() or try_adsb_lol_fallback()
             if fb:
                 self.send_json(fb)
                 return
@@ -1653,7 +1737,7 @@ class Handler(SimpleHTTPRequestHandler):
             return
 
         if status == 429:
-            fb = get_stale_fallback()
+            fb = get_stale_fallback() or try_adsb_lol_fallback()
             if fb:
                 self.send_json(fb)
                 return
@@ -1670,7 +1754,7 @@ class Handler(SimpleHTTPRequestHandler):
             return
 
         if status != 200:
-            fb = get_stale_fallback()
+            fb = get_stale_fallback() or try_adsb_lol_fallback()
             if fb:
                 self.send_json(fb)
                 return

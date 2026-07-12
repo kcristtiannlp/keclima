@@ -12,6 +12,13 @@ export async function fetchRetry(url, options = {}) {
   const { retries = 2, retryDelay = 400, timeoutMs = 12000, ...init } = options;
   let lastError;
 
+  let targetUrl = url;
+  if (typeof url === 'string' && url.startsWith('/api/')) {
+    if (typeof window !== 'undefined' && window.location.protocol === 'file:') {
+      targetUrl = 'http://localhost:8080' + url;
+    }
+  }
+
   for (let attempt = 0; attempt <= retries; attempt++) {
     const controller = new AbortController();
     const parentSignal = init.signal;
@@ -26,7 +33,7 @@ export async function fetchRetry(url, options = {}) {
     const timer = setTimeout(() => controller.abort(), timeoutMs);
 
     try {
-      const res = await fetch(url, { ...init, signal: controller.signal });
+      const res = await fetch(targetUrl, { ...init, signal: controller.signal });
       clearTimeout(timer);
       if (parentSignal) {
         parentSignal.removeEventListener('abort', onParentAbort);
