@@ -7,25 +7,31 @@ import { API } from '../../config.js';
 import { fetchRetry } from '../../utils/fetchRetry.js';
 
 /**
- * Grade de AQI ao redor do centro (camada no mapa).
- * @param {number} latitude
- * @param {number} longitude
+ * Grade de AQI no viewport (ou ao redor do centro — legado).
+ * @param {number|Array<{latitude:number,longitude:number}>} latitudeOrPoints
+ * @param {number} [longitude]
  * @param {AbortSignal} [signal]
  * @returns {Promise<Array<{ latitude: number, longitude: number, usAqi: number|null, pm25: number|null }>>}
  */
-export async function fetchAirQualityGrid(latitude, longitude, signal) {
-  const step = 0.5;
-  const lats = [];
-  const lons = [];
-  for (let i = -2; i <= 2; i++) {
-    for (let j = -2; j <= 2; j++) {
-      lats.push(latitude + i * step);
-      lons.push(longitude + j * step);
+export async function fetchAirQualityGrid(latitudeOrPoints, longitude, signal) {
+  let coords;
+  if (Array.isArray(latitudeOrPoints)) {
+    coords = latitudeOrPoints.slice(0, 64);
+  } else {
+    const step = 0.5;
+    coords = [];
+    for (let i = -2; i <= 2; i++) {
+      for (let j = -2; j <= 2; j++) {
+        coords.push({
+          latitude: latitudeOrPoints + i * step,
+          longitude: longitude + j * step,
+        });
+      }
     }
   }
   const params = new URLSearchParams({
-    latitude: lats.join(','),
-    longitude: lons.join(','),
+    latitude: coords.map((c) => c.latitude).join(','),
+    longitude: coords.map((c) => c.longitude).join(','),
     current: 'us_aqi,pm2_5,european_aqi',
     timezone: 'auto',
   });
@@ -33,7 +39,7 @@ export async function fetchAirQualityGrid(latitude, longitude, signal) {
     signal,
     headers: { Accept: 'application/json' },
     retries: 1,
-    timeoutMs: 20000,
+    timeoutMs: 35000,
   });
   if (!res.ok) {
     throw new Error(`Open-Meteo AQI grid HTTP ${res.status}`);

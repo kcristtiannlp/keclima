@@ -47,31 +47,43 @@ export async function createApp(root, options = {}) {
 
   setOutlet(main);
 
-  registerRoute(ROUTES.dashboard, async (c) => {
+  const registerRouteAliases = (paths, handler) => {
+    for (const path of paths) {
+      registerRoute(path, handler);
+    }
+  };
+
+  registerRouteAliases([ROUTES.dashboard, '/dashboard'], async (c) => {
     const { renderDashboardPage } = await import('./pages/DashboardPage.js');
     return renderDashboardPage(c);
   });
-  registerRoute(ROUTES.map, async (c) => {
+  registerRouteAliases([ROUTES.map, '/map'], async (c) => {
     const { renderMapPage } = await import('./pages/MapPage.js');
     return renderMapPage(c);
   });
-  registerRoute(ROUTES.charts, async (c) => {
+  const chartsHandler = async (c) => {
     const { renderChartsPage } = await import('./pages/ChartsPage.js');
     return renderChartsPage(c);
-  });
-  registerRoute(ROUTES.favorites, async (c) => {
+  };
+  registerRoute(ROUTES.charts, chartsHandler);
+  // sub-rota da aba Satélite IV (estilo Climatempo)
+  registerRoute('/graficos/satelite', chartsHandler);
+  registerRoute('/graficos/satellite', chartsHandler);
+  registerRoute('/charts', chartsHandler);
+  registerRoute('/charts/satellite', chartsHandler);
+  registerRouteAliases([ROUTES.favorites, '/favorites'], async (c) => {
     const { renderFavoritesPage } = await import('./pages/FavoritesPage.js');
     return renderFavoritesPage(c);
   });
-  registerRoute(ROUTES.history, async (c) => {
+  registerRouteAliases([ROUTES.history, '/history'], async (c) => {
     const { renderHistoryPage } = await import('./pages/HistoryPage.js');
     return renderHistoryPage(c);
   });
-  registerRoute(ROUTES.settings, async (c) => {
+  registerRouteAliases([ROUTES.settings, '/settings'], async (c) => {
     const { renderSettingsPage } = await import('./pages/SettingsPage.js');
     return renderSettingsPage(c);
   });
-  registerRoute(ROUTES.about, async (c) => {
+  registerRouteAliases([ROUTES.about, '/about'], async (c) => {
     const { renderAboutPage } = await import('./pages/AboutPage.js');
     return renderAboutPage(c);
   });

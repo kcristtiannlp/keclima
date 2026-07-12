@@ -6,6 +6,7 @@
 import { CACHE_TTL, STORAGE_KEYS } from '../config.js';
 import { fetchForecast, fetchArchiveDaily } from '../api/providers/openMeteo.js';
 import { fetchAirQuality } from '../api/providers/airQuality.js';
+import { fetchInmetAlerts } from '../api/providers/inmet.js';
 import { cacheGet, cacheSet } from './cacheService.js';
 import { setState, getState } from '../core/State.js';
 import { persistLocation } from './locationService.js';
@@ -84,9 +85,10 @@ export async function loadWeatherFor(location, options = {}) {
   }
 
   try {
-    const [weather, airQuality] = await Promise.all([
+    const [weather, airQuality, officialAlerts] = await Promise.all([
       fetchForecast(location.latitude, location.longitude, signal),
       fetchAirQuality(location.latitude, location.longitude, signal).catch(() => null),
+      fetchInmetAlerts(location.latitude, location.longitude, signal).catch(() => null),
     ]);
 
     weather.current.uvIndex = currentUv(weather);
@@ -103,6 +105,7 @@ export async function loadWeatherFor(location, options = {}) {
     setState({
       weather,
       airQuality,
+      officialAlerts,
       loading: false,
       fromCache: false,
       offline: false,

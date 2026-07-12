@@ -137,23 +137,34 @@ export async function fetchArchiveDaily(latitude, longitude, days, signal) {
 }
 
 /**
- * Grade de pontos ao redor do centro (temp/vento/nuvens/chuva prevista no mapa).
- * @param {number} latitude
- * @param {number} longitude
+ * Grade de pontos no viewport (ou mundo). Aceita centro legado ou lista de pontos.
+ * @param {number|Array<{latitude:number,longitude:number}>} latitudeOrPoints
+ * @param {number} [longitude]
  * @param {AbortSignal} [signal]
  */
-export async function fetchMapGrid(latitude, longitude, signal) {
-  // Grade 7×7 (~0.35°) — mais detalhe sem estourar a API
-  const step = 0.35;
-  const span = 3;
-  const lats = [];
-  const lons = [];
-  for (let i = -span; i <= span; i++) {
-    for (let j = -span; j <= span; j++) {
-      lats.push(latitude + i * step);
-      lons.push(longitude + j * step);
+export async function fetchMapGrid(latitudeOrPoints, longitude, signal) {
+  let coords;
+  if (Array.isArray(latitudeOrPoints)) {
+    coords = latitudeOrPoints;
+  } else {
+    // legado: 7×7 ao redor do centro
+    const step = 0.35;
+    const span = 3;
+    coords = [];
+    for (let i = -span; i <= span; i++) {
+      for (let j = -span; j <= span; j++) {
+        coords.push({
+          latitude: latitudeOrPoints + i * step,
+          longitude: longitude + j * step,
+        });
+      }
     }
   }
+
+  // Open-Meteo: no máximo ~100 localizações; pedimos até 81
+  const limited = coords.slice(0, 81);
+  const lats = limited.map((c) => c.latitude);
+  const lons = limited.map((c) => c.longitude);
 
   const params = new URLSearchParams({
     latitude: lats.join(','),
@@ -179,7 +190,7 @@ export async function fetchMapGrid(latitude, longitude, signal) {
     signal,
     headers: { Accept: 'application/json' },
     retries: 1,
-    timeoutMs: 35000,
+    timeoutMs: 45000,
   });
   if (!res.ok) {
     throw new Error(`Open-Meteo grid HTTP ${res.status}`);

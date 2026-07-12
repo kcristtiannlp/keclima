@@ -2,7 +2,7 @@
  * KeClima Service Worker – shell completo + runtime inteligente.
  */
 
-const CACHE_VERSION = 'keclima-v0.6.0';
+const CACHE_VERSION = 'keclima-v0.7.4';
 const SHELL_CACHE = `${CACHE_VERSION}-shell`;
 const RUNTIME_CACHE = `${CACHE_VERSION}-runtime`;
 const API_CACHE = `${CACHE_VERSION}-api`;
@@ -18,6 +18,10 @@ const SHELL_ASSETS = [
   './src/api/providers/nominatim.js',
   './src/api/providers/openMeteo.js',
   './src/api/providers/opensky.js',
+  './src/api/providers/ships.js',
+  './src/api/providers/disasters.js',
+  './src/api/providers/satellite.js',
+  './src/widgets/SatelliteWidget.js',
   './src/app.js',
   './src/components/Header.js',
   './src/components/Nav.js',
@@ -51,6 +55,7 @@ const SHELL_ASSETS = [
   './src/utils/dom.js',
   './src/utils/fetchRetry.js',
   './src/utils/i18n.js',
+  './src/utils/mapBounds.js',
   './src/utils/units.js',
   './src/utils/weather.js',
   './src/widgets/AQIWidget.js',

@@ -1,2 +1,5 @@
-# KeClima usa apenas a biblioteca padrão do Python 3.
-# Arquivo vazio de propósito — PaaS (Render/Railway) reconhece o projeto como Python.
+# KeClima: biblioteca padrão do Python 3 + WebSocket para AISStream (navios).
+# Sem websockets, navios usam só Digitraffic (Europa). Com:
+#   pip install websockets
+# e chave em Configurações (ou env AISSTREAM_API_KEY), ativa AISStream global.
+websockets>=10.0

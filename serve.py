@@ -10,10 +10,13 @@ Uso:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import math
 import os
+import re
 import sys
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -22,8 +25,16 @@ from datetime import datetime, timedelta, timezone
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+try:
+    import websockets  # type: ignore
+
+    HAS_WEBSOCKETS = True
+except ImportError:  # pragma: no cover
+    websockets = None  # type: ignore
+    HAS_WEBSOCKETS = False
+
 ROOT = Path(__file__).resolve().parent
-APP_VERSION = "0.6.0"
+APP_VERSION = "0.7.4"
 
 
 def resolve_port() -> int:
@@ -76,6 +87,21 @@ def cache_set(key: str, val):
     _CACHE[key] = (time.time(), val)
 
 
+def _goes_stamp_to_iso(stamp: str) -> str | None:
+    """Converte carimbo NOAA YYYYJJJHHMM (ano+dia do ano+HHMM) → ISO UTC."""
+    if not stamp or len(stamp) < 11:
+        return None
+    try:
+        year = int(stamp[0:4])
+        doy = int(stamp[4:7])
+        hour = int(stamp[7:9])
+        minute = int(stamp[9:11])
+        dt = datetime(year, 1, 1, hour, minute, tzinfo=timezone.utc) + timedelta(days=doy - 1)
+        return dt.isoformat().replace("+00:00", "Z")
+    except (ValueError, OverflowError):
+        return None
+
+
 def fetch_url(url: str, timeout: int = 45, accept: str = "*/*", extra_headers: dict | None = None) -> tuple[int, bytes]:
     headers = {
         "User-Agent": BROWSER_UA,
@@ -92,6 +118,153 @@ def fetch_url(url: str, timeout: int = 45, accept: str = "*/*", extra_headers: d
     except urllib.error.HTTPError as exc:
         body = exc.read() if hasattr(exc, "read") else b""
         return exc.code, body
+
+
+def _point_in_ring(lon: float, lat: float, ring: list) -> bool:
+    """Ray casting em anel GeoJSON [lon, lat]."""
+    inside = False
+    n = len(ring)
+    if n < 3:
+        return False
+    j = n - 1
+    for i in range(n):
+        try:
+            xi, yi = float(ring[i][0]), float(ring[i][1])
+            xj, yj = float(ring[j][0]), float(ring[j][1])
+        except (TypeError, ValueError, IndexError):
+            j = i
+            continue
+        intersects = (yi > lat) != (yj > lat)
+        if intersects:
+            x_cross = (xj - xi) * (lat - yi) / ((yj - yi) or 1e-15) + xi
+            if lon < x_cross:
+                inside = not inside
+        j = i
+    return inside
+
+
+def _point_in_geojson(lon: float, lat: float, geom) -> bool:
+    if not geom:
+        return False
+    if isinstance(geom, str):
+        try:
+            geom = json.loads(geom)
+        except json.JSONDecodeError:
+            return False
+    if not isinstance(geom, dict):
+        return False
+    gtype = (geom.get("type") or "").lower()
+    coords = geom.get("coordinates")
+    if gtype == "polygon" and coords:
+        # exterior ring only
+        return _point_in_ring(lon, lat, coords[0] or [])
+    if gtype == "multipolygon" and coords:
+        for poly in coords:
+            if poly and _point_in_ring(lon, lat, poly[0] or []):
+                return True
+    return False
+
+
+def _inmet_severity_level(sev: str | None, color: str | None) -> str:
+    s = (sev or "").lower()
+    c = (color or "").upper()
+    if "grande" in s or "iminente" in s or c in ("#FF0000", "#C00000", "#FF0000"):
+        return "danger"
+    if "perigo" in s and "potencial" not in s:
+        return "danger"
+    if "potencial" in s or c in ("#FFFE00", "#FFFF00", "#FFD700"):
+        return "warning"
+    return "info"
+
+
+def fetch_inmet_alerts(lat: float | None = None, lon: float | None = None) -> dict:
+    """
+    Avisos ativos INMET (hoje + futuro) via apiprevmet3.
+    Filtra por ponto no polígono quando lat/lon informados.
+    """
+    cache_key = "inmet_avisos_ativos"
+    raw = cache_get(cache_key, 300.0)
+    if raw is None:
+        url = "https://apiprevmet3.inmet.gov.br/avisos/ativos"
+        status, body = fetch_url(url, timeout=25, accept="application/json")
+        if status != 200 or not body:
+            raise RuntimeError(f"inmet_avisos_http_{status}")
+        raw = json.loads(body.decode("utf-8", errors="replace"))
+        cache_set(cache_key, raw)
+
+    buckets = []
+    for key in ("hoje", "futuro"):
+        for item in raw.get(key) or []:
+            if item.get("encerrado"):
+                continue
+            buckets.append((key, item))
+
+    alerts = []
+    for when, item in buckets:
+        geom = item.get("poligono")
+        hits = True
+        if lat is not None and lon is not None:
+            hits = _point_in_geojson(lon, lat, geom)
+            # fallback fraco: se polígono inválido, não inclui
+            if not hits and not geom:
+                hits = False
+        if not hits:
+            continue
+
+        riscos = item.get("riscos") or []
+        if isinstance(riscos, str):
+            riscos = [riscos]
+        instrucoes = item.get("instrucoes") or []
+        if isinstance(instrucoes, str):
+            instrucoes = [instrucoes]
+
+        sev = item.get("severidade") or ""
+        level = _inmet_severity_level(sev, item.get("aviso_cor"))
+        desc = (item.get("descricao") or "Aviso meteorológico").strip()
+        risco_txt = " ".join(str(r).strip() for r in riscos if r).strip()
+        message = f"Aviso de condições meteorológicas extremas — {desc}"
+        if risco_txt:
+            message = f"{message}. {risco_txt}"
+
+        alerts.append(
+            {
+                "id": f"inmet-{item.get('id') or item.get('id_aviso')}",
+                "idAviso": item.get("id_aviso"),
+                "source": "INMET",
+                "provider": "Instituto Nacional de Meteorologia",
+                "title": desc,
+                "event": desc,
+                "severity": level,
+                "severityLabel": sev,
+                "color": item.get("aviso_cor"),
+                "message": message,
+                "risks": [str(r).strip() for r in riscos if r],
+                "instructions": [str(i).strip() for i in instrucoes if i],
+                "start": item.get("inicio") or item.get("data_inicio"),
+                "end": item.get("fim") or item.get("data_fim"),
+                "states": item.get("estados"),
+                "regions": item.get("regioes"),
+                "when": when,  # hoje | futuro
+                "url": "https://alertas2.inmet.gov.br/",
+            }
+        )
+
+    # futuros depois, mais graves primeiro
+    order = {"danger": 0, "warning": 1, "info": 2}
+    alerts.sort(key=lambda a: (0 if a.get("when") == "hoje" else 1, order.get(a.get("severity"), 9)))
+
+    return {
+        "count": len(alerts),
+        "alerts": alerts,
+        "source": "INMET Alert-AS",
+        "sourceUrl": "https://alertas2.inmet.gov.br/",
+        "filtered": lat is not None and lon is not None,
+        "location": {"latitude": lat, "longitude": lon} if lat is not None else None,
+        "disclaimer": (
+            "Avisos oficiais do INMET (Alert-AS). "
+            "Não confundir com previsão por modelo. Fonte: apiprevmet3.inmet.gov.br."
+        ),
+    }
 
 
 def pick_region(lat: float, lon: float) -> str:
@@ -427,14 +600,51 @@ def fetch_firms_points(west, south, east, north, lat, lon, key, days):
         pts = parse_firms_csv(text_csv, west, south, east, north)
         label = "firms_area_api"
     else:
-        region = pick_region(lat, lon)
-        url = FIRMS_PUBLIC.get(region) or FIRMS_PUBLIC["south_america"]
-        status, raw = fetch_url(url, accept="text/csv,text/plain,*/*")
-        if status != 200:
-            raise RuntimeError(f"firms_http_{status}")
-        text_csv = raw.decode("utf-8", errors="replace")
-        pts = parse_firms_csv(text_csv, west, south, east, north)
-        label = f"firms_public_{region}"
+        # Área grande: junta CSVs regionais + MODIS global (não só a região do usuário)
+        lat_span = abs(north - south)
+        lon_span = abs(east - west)
+        regions = set()
+        if lat_span >= 20 or lon_span >= 20:
+            regions.update(FIRMS_PUBLIC.keys())
+        else:
+            regions.add(pick_region(lat, lon))
+            # cantos do bbox também (transcontinental)
+            for la, lo in (
+                (south, west),
+                (south, east),
+                (north, west),
+                (north, east),
+                ((south + north) / 2, (west + east) / 2),
+            ):
+                regions.add(pick_region(la, lo))
+            regions.add("world_modis")
+        pts = []
+        labels = []
+        for region in regions:
+            url = FIRMS_PUBLIC.get(region)
+            if not url:
+                continue
+            try:
+                status, raw = fetch_url(url, accept="text/csv,text/plain,*/*", timeout=50)
+                if status != 200:
+                    continue
+                text_csv = raw.decode("utf-8", errors="replace")
+                chunk = parse_firms_csv(text_csv, west, south, east, north)
+                pts.extend(chunk)
+                labels.append(region)
+            except Exception:  # noqa: BLE001
+                continue
+        # dedupe por lat/lon arredondado
+        seen = set()
+        uniq = []
+        for p in pts:
+            k = (round(p["latitude"], 3), round(p["longitude"], 3))
+            if k in seen:
+                continue
+            seen.add(k)
+            uniq.append(p)
+        pts = uniq
+        label = "firms_public_" + "+".join(labels[:6]) if labels else "firms_public"
     for p in pts:
         p["provider"] = "firms"
         p["sources"] = ["firms"]
@@ -635,10 +845,16 @@ class Handler(SimpleHTTPRequestHandler):
                     "version": APP_VERSION,
                     "firms_proxy": True,
                     "inmet_proxy": True,
+                    "inmet_alerts_proxy": True,
                     "inpe_proxy": True,
                     "fires_merged": True,
                     "deforestation_proxy": True,
                     "flights_proxy": True,
+                    "ships_proxy": True,
+                    "iss_proxy": True,
+                    "earthquakes_proxy": True,
+                    "eonet_proxy": True,
+                    "satellite_proxy": True,
                 }
             )
             return
@@ -654,6 +870,9 @@ class Handler(SimpleHTTPRequestHandler):
         if parsed.path == "/api/inmet/nearest":
             self.handle_inmet_nearest(parsed)
             return
+        if parsed.path == "/api/inmet/alerts":
+            self.handle_inmet_alerts(parsed)
+            return
         if parsed.path == "/api/flights/live":
             self.handle_flights_live(parsed)
             return
@@ -663,7 +882,41 @@ class Handler(SimpleHTTPRequestHandler):
         if parsed.path == "/api/flights/route":
             self.handle_flights_route(parsed)
             return
+        if parsed.path == "/api/ships/live":
+            self.handle_ships_live(parsed)
+            return
+        if parsed.path == "/api/iss/now":
+            self.handle_iss_now(parsed)
+            return
+        if parsed.path == "/api/earthquakes/live":
+            self.handle_earthquakes_live(parsed)
+            return
+        if parsed.path == "/api/eonet/events":
+            self.handle_eonet_events(parsed)
+            return
+        if parsed.path == "/api/satellite/goes":
+            self.handle_satellite_goes(parsed)
+            return
         return super().do_GET()
+
+    def handle_inmet_alerts(self, parsed: urllib.parse.ParseResult):
+        """Avisos meteorológicos oficiais INMET (Alert-AS) filtrados por ponto."""
+        qs = urllib.parse.parse_qs(parsed.query)
+        lat = lon = None
+        try:
+            if qs.get("lat") and qs.get("lon"):
+                lat = float(qs.get("lat", [None])[0])
+                lon = float(qs.get("lon", [None])[0])
+        except (TypeError, ValueError):
+            self.send_json({"error": "invalid_params"}, 400)
+            return
+
+        try:
+            payload = fetch_inmet_alerts(lat, lon)
+        except Exception as exc:  # noqa: BLE001
+            self.send_json({"error": "inmet_alerts_failed", "detail": str(exc)}, 502)
+            return
+        self.send_json(payload)
 
     def handle_inmet_nearest(self, parsed: urllib.parse.ParseResult):
         qs = urllib.parse.parse_qs(parsed.query)
@@ -740,16 +993,24 @@ class Handler(SimpleHTTPRequestHandler):
             north = float(qs.get("north", ["6"])[0])
             lat = float(qs.get("lat", [str((south + north) / 2)])[0])
             lon = float(qs.get("lon", [str((west + east) / 2)])[0])
-            # limita bbox enorme (evita travar)
-            if abs(east - west) > 8 or abs(north - south) > 8:
-                half = 2.5
+            # limita só extremos (continente ok; evita WFS gigante)
+            if abs(east - west) > 40:
+                half = 20
                 west, east = lon - half, lon + half
+            if abs(north - south) > 40:
+                half = 20
                 south, north = lat - half, lat + half
         except ValueError:
             self.send_json({"error": "invalid_params"}, 400)
             return
 
-        if not (-35 <= lat <= 6 and -75 <= lon <= -30):
+        # DETER só existe no Brasil — interseção do viewport com bbox BR
+        br_west, br_south, br_east, br_north = -75.0, -35.0, -30.0, 6.0
+        iw = max(west, br_west)
+        is_ = max(south, br_south)
+        ie = min(east, br_east)
+        in_ = min(north, br_north)
+        if iw >= ie or is_ >= in_:
             self.send_json(
                 {
                     "inBrazil": False,
@@ -764,6 +1025,9 @@ class Handler(SimpleHTTPRequestHandler):
                 }
             )
             return
+        west, south, east, north = iw, is_, ie, in_
+        lat = (south + north) / 2
+        lon = (west + east) / 2
 
         try:
             alerts, errors = fetch_deter_bbox(west, south, east, north)
@@ -1141,48 +1405,71 @@ class Handler(SimpleHTTPRequestHandler):
             self.send_json({"error": "invalid_params"}, 400)
             return
 
-        include_ground = qs.get("ground", ["0"])[0] in ("1", "true", "yes")
+        # ground=1 por padrão (mais aviões no mapa; solo com estilo diferente no front)
+        include_ground = qs.get("ground", ["1"])[0] not in ("0", "false", "no")
+        force_global = qs.get("global", ["0"])[0] in ("1", "true", "yes")
 
-        # Normaliza e limita área (evita payload enorme / rate limit)
+        # Normaliza bbox
         if west > east:
             west, east = east, west
         if south > north:
             south, north = north, south
-        # Clamp global
         south = max(-90.0, min(90.0, south))
         north = max(-90.0, min(90.0, north))
         west = max(-180.0, min(180.0, west))
         east = max(-180.0, min(180.0, east))
 
-        max_span = 8.0  # graus
-        lat_span = north - south
-        lon_span = east - west
-        if lat_span > max_span or lon_span > max_span:
-            clat = (south + north) / 2
-            clon = (west + east) / 2
-            half = max_span / 2
-            south, north = clat - half, clat + half
-            west, east = clon - half, clon + half
+        lat_span = max(0.01, north - south)
+        lon_span = max(0.01, east - west)
+        # Dump mundial só em zoom muito aberto. Continentes usam bbox da OpenSky
+        # (antes: dump global + corte nos 1200 primeiros = quase nenhum voo no BR).
+        use_global = force_global or lat_span >= 85.0 or lon_span >= 120.0
 
-        cache_key = f"opensky:{west:.2f},{south:.2f},{east:.2f},{north:.2f}:{int(include_ground)}"
-        cached = cache_get(cache_key, 10.0)
+        cache_key = (
+            f"opensky:global:v2:{int(include_ground)}"
+            if use_global
+            else f"opensky:v2:{west:.2f},{south:.2f},{east:.2f},{north:.2f}:{int(include_ground)}"
+        )
+        cached = cache_get(cache_key, 15.0 if use_global else 10.0)
         if cached is not None:
+            if use_global and lat_span < 160 and lon_span < 340:
+                filtered = [
+                    f
+                    for f in cached.get("flights") or []
+                    if south <= f["latitude"] <= north and west <= f["longitude"] <= east
+                ]
+                max_n = 2500
+                truncated = len(filtered) > max_n
+                filtered = filtered[:max_n]
+                out = {
+                    **cached,
+                    "flights": filtered,
+                    "count": len(filtered),
+                    "bbox": {"west": west, "south": south, "east": east, "north": north},
+                    "scope": "global_filtered",
+                    "truncated": truncated or cached.get("truncated", False),
+                }
+                self.send_json(out)
+                return
             self.send_json(cached)
             return
 
-        params = urllib.parse.urlencode(
-            {
-                "lamin": f"{south:.4f}",
-                "lomin": f"{west:.4f}",
-                "lamax": f"{north:.4f}",
-                "lomax": f"{east:.4f}",
-            }
-        )
-        url = f"https://opensky-network.org/api/states/all?{params}"
+        if use_global:
+            url = "https://opensky-network.org/api/states/all"
+        else:
+            params = urllib.parse.urlencode(
+                {
+                    "lamin": f"{south:.4f}",
+                    "lomin": f"{west:.4f}",
+                    "lamax": f"{north:.4f}",
+                    "lomax": f"{east:.4f}",
+                }
+            )
+            url = f"https://opensky-network.org/api/states/all?{params}"
         try:
             status, body = fetch_url(
                 url,
-                timeout=20,
+                timeout=40 if use_global else 25,
                 accept="application/json",
                 extra_headers={
                     "User-Agent": "KeClima/0.6 (weather-pwa; opensky-proxy)",
@@ -1226,8 +1513,9 @@ class Handler(SimpleHTTPRequestHandler):
             return
 
         states = raw.get("states") or []
-        flights = []
-        max_flights = 250
+        # IMPORTANTE: filtrar por bbox ANTES de limitar quantidade
+        # (no dump global, os primeiros N estados são quase todos Europa/EUA)
+        flights_all = []
         for st in states:
             if not st or len(st) < 8:
                 continue
@@ -1235,17 +1523,28 @@ class Handler(SimpleHTTPRequestHandler):
             lat = st[6]
             if lon is None or lat is None:
                 continue
+            try:
+                lat_f = float(lat)
+                lon_f = float(lon)
+            except (TypeError, ValueError):
+                continue
+            if not (-90 <= lat_f <= 90 and -180 <= lon_f <= 180):
+                continue
+            # no modo bbox da API, ainda re-filtra por segurança
+            if not use_global and not (south <= lat_f <= north and west <= lon_f <= east):
+                continue
+            # no dump global, guarda tudo com posição (filtro na resposta)
             on_ground = bool(st[8]) if st[8] is not None else False
             if on_ground and not include_ground:
                 continue
             callsign = (st[1] or "").strip() or None
-            flights.append(
+            flights_all.append(
                 {
                     "icao24": st[0],
                     "callsign": callsign,
                     "originCountry": st[2],
-                    "longitude": float(lon),
-                    "latitude": float(lat),
+                    "longitude": lon_f,
+                    "latitude": lat_f,
                     "altitudeM": float(st[7]) if st[7] is not None else None,
                     "geoAltitudeM": float(st[13]) if len(st) > 13 and st[13] is not None else None,
                     "onGround": on_ground,
@@ -1255,16 +1554,641 @@ class Handler(SimpleHTTPRequestHandler):
                     "squawk": st[14] if len(st) > 14 else None,
                 }
             )
-            if len(flights) >= max_flights:
-                break
 
+        if use_global:
+            # cache: amostra ampla mundial (para refiltrar por viewport)
+            max_cache = 6000
+            truncated_cache = len(flights_all) > max_cache
+            # prioriza em voo no cache
+            flights_all.sort(key=lambda f: (f.get("onGround") is True, -(f.get("velocityMs") or 0)))
+            cache_flights = flights_all[:max_cache]
+            payload_full = {
+                "time": raw.get("time"),
+                "count": len(cache_flights),
+                "flights": cache_flights,
+                "source": "OpenSky Network",
+                "bbox": {"west": -180, "south": -90, "east": 180, "north": 90},
+                "truncated": truncated_cache,
+                "scope": "global",
+                "rawStates": len(states),
+            }
+            cache_set(cache_key, payload_full)
+
+            filtered = [
+                f
+                for f in cache_flights
+                if south <= f["latitude"] <= north and west <= f["longitude"] <= east
+            ]
+            # se o cache global não cobriu a região, tenta bbox direto como complemento
+            if len(filtered) < 15 and lat_span < 80 and lon_span < 100:
+                try:
+                    params = urllib.parse.urlencode(
+                        {
+                            "lamin": f"{south:.4f}",
+                            "lomin": f"{west:.4f}",
+                            "lamax": f"{north:.4f}",
+                            "lomax": f"{east:.4f}",
+                        }
+                    )
+                    url2 = f"https://opensky-network.org/api/states/all?{params}"
+                    st2, body2 = fetch_url(
+                        url2,
+                        timeout=20,
+                        accept="application/json",
+                        extra_headers={
+                            "User-Agent": "KeClima/0.6 (weather-pwa; opensky-proxy)",
+                            "Referer": "https://opensky-network.org/",
+                        },
+                    )
+                    if st2 == 200 and body2:
+                        raw2 = json.loads(body2.decode("utf-8", errors="replace"))
+                        by_id = {f["icao24"]: f for f in filtered if f.get("icao24")}
+                        for st in raw2.get("states") or []:
+                            if not st or len(st) < 8 or st[5] is None or st[6] is None:
+                                continue
+                            on_ground = bool(st[8]) if st[8] is not None else False
+                            if on_ground and not include_ground:
+                                continue
+                            icao = st[0]
+                            by_id[icao] = {
+                                "icao24": icao,
+                                "callsign": (st[1] or "").strip() or None,
+                                "originCountry": st[2],
+                                "longitude": float(st[5]),
+                                "latitude": float(st[6]),
+                                "altitudeM": float(st[7]) if st[7] is not None else None,
+                                "geoAltitudeM": float(st[13])
+                                if len(st) > 13 and st[13] is not None
+                                else None,
+                                "onGround": on_ground,
+                                "velocityMs": float(st[9]) if st[9] is not None else None,
+                                "trackDeg": float(st[10]) if st[10] is not None else None,
+                                "verticalRateMs": float(st[11]) if st[11] is not None else None,
+                                "squawk": st[14] if len(st) > 14 else None,
+                            }
+                        filtered = list(by_id.values())
+                except Exception:  # noqa: BLE001
+                    pass
+
+            max_n = 2500
+            truncated = len(filtered) > max_n
+            filtered = filtered[:max_n]
+            self.send_json(
+                {
+                    "time": raw.get("time"),
+                    "count": len(filtered),
+                    "flights": filtered,
+                    "source": "OpenSky Network",
+                    "bbox": {"west": west, "south": south, "east": east, "north": north},
+                    "scope": "global_filtered",
+                    "truncated": truncated or truncated_cache,
+                    "rawStates": len(states),
+                }
+            )
+            return
+
+        # Modo bbox: devolve todos do retângulo (limite alto)
+        max_n = 2500
+        truncated = len(flights_all) > max_n
+        flights = flights_all[:max_n]
         payload = {
             "time": raw.get("time"),
             "count": len(flights),
             "flights": flights,
             "source": "OpenSky Network",
             "bbox": {"west": west, "south": south, "east": east, "north": north},
-            "truncated": len(flights) >= max_flights,
+            "truncated": truncated,
+            "scope": "bbox",
+            "rawStates": len(states),
+        }
+        cache_set(cache_key, payload)
+        self.send_json(payload)
+
+    def handle_ships_live(self, parsed: urllib.parse.ParseResult):
+        """Navios/AIS: Digitraffic (Europa grátis) + AISStream (chave, global/BR)."""
+        qs = urllib.parse.parse_qs(parsed.query)
+        try:
+            west = float(qs.get("west", ["-180"])[0])
+            south = float(qs.get("south", ["-90"])[0])
+            east = float(qs.get("east", ["180"])[0])
+            north = float(qs.get("north", ["90"])[0])
+        except ValueError:
+            self.send_json({"error": "invalid_params"}, 400)
+            return
+        if west > east:
+            west, east = east, west
+        if south > north:
+            south, north = north, south
+
+        key = (qs.get("key", [""])[0] or os.environ.get("AISSTREAM_API_KEY") or "").strip()
+        outside_europe = not _bbox_overlaps_europe(west, south, east, north)
+        needs_key = outside_europe and not key
+
+        ais_ships = []
+        ais_err = None
+        ais_connected = False
+        ais_cache_total = 0
+        if key:
+            just_started = ensure_aisstream(key, west, south, east, north)
+            # Stream é ao vivo: no 1º pedido espera mais (BR/costa demora a encher o cache)
+            wait_s = 6.0 if just_started else 2.5
+            deadline = time.time() + wait_s
+            while True:
+                ais_ships, ais_err, ais_connected, _last = aisstream_ships_in_bbox(
+                    west, south, east, north
+                )
+                with _AISSTREAM_LOCK:
+                    ais_cache_total = len(_AISSTREAM["ships"])
+                if ais_ships or ais_err or time.time() >= deadline:
+                    break
+                time.sleep(0.45)
+
+        digit_ships = []
+        digit_err = None
+        digit_src = None
+        # Digitraffic só cobre Europa/Báltico — não baixa o feed no BR/oceano
+        if not outside_europe:
+            try:
+                data = fetch_digitraffic_ais()
+                digit_src = data.get("source")
+                digit_ships = [
+                    s
+                    for s in data.get("ships") or []
+                    if south <= s["latitude"] <= north and west <= s["longitude"] <= east
+                ]
+            except Exception as exc:  # noqa: BLE001
+                digit_err = str(exc)
+
+        # merge por MMSI (AISStream sobrescreve Digitraffic)
+        by_mmsi = {}
+        for s in digit_ships:
+            if s.get("mmsi"):
+                by_mmsi[s["mmsi"]] = s
+        for s in ais_ships:
+            if s.get("mmsi"):
+                by_mmsi[s["mmsi"]] = s
+        ships = list(by_mmsi.values())
+        max_n = 1200
+        truncated = len(ships) > max_n
+        ships = ships[:max_n]
+
+        sources = []
+        if digit_ships:
+            sources.append("Digitraffic")
+        if ais_ships:
+            sources.append("AISStream")
+        if not sources:
+            sources.append("none")
+
+        if needs_key:
+            note = (
+                "No Brasil/Américas o feed grátis Digitraffic não tem cobertura. "
+                "Cole a chave grátis de aisstream.io em Configurações (login GitHub) "
+                "ou defina AISSTREAM_API_KEY no serve.py. Depois reative a camada Navios."
+            )
+        elif key and not ais_ships and ais_connected:
+            note = (
+                "AISStream ligado, ainda sem posições nesta área (aguarde ~15–30s; "
+                "AIS terrestre depende de estações costeiras — foque portos/litoral)."
+            )
+        elif key and ais_err and not ais_ships:
+            note = (
+                f"AISStream: {ais_err}. Verifique a chave em Configurações. "
+                "Sem chave válida: só Europa (Digitraffic)."
+            )
+        elif not key:
+            note = (
+                "Sem chave AISStream: só Digitraffic (Europa/Báltico). "
+                "Com chave grátis em aisstream.io: cobertura mundial (inclui costa do BR)."
+            )
+        else:
+            note = "AISStream + Digitraffic (quando a área se sobrepõe)."
+        if not HAS_WEBSOCKETS and key:
+            note = "Instale o pacote Python 'websockets' (pip install websockets) para AISStream. " + note
+
+        if not ships and digit_err and not key:
+            self.send_json(
+                {"error": "ships_failed", "detail": digit_err, "ships": [], "count": 0},
+                502,
+            )
+            return
+
+        self.send_json(
+            {
+                "count": len(ships),
+                "ships": ships,
+                "source": " + ".join(sources),
+                "coverage": "Digitraffic (EU) + AISStream (chave, global)",
+                "coverageNote": note,
+                "needsKey": needs_key,
+                "region": "outside_europe" if outside_europe else "europe",
+                "aisstream": {
+                    "enabled": bool(key),
+                    "connected": ais_connected,
+                    "error": ais_err,
+                    "websockets": HAS_WEBSOCKETS,
+                    "count": len(ais_ships),
+                    "cacheTotal": ais_cache_total,
+                    "signup": "https://aisstream.io/apikeys",
+                },
+                "digitraffic": {"count": len(digit_ships), "error": digit_err, "source": digit_src},
+                "bbox": {"west": west, "south": south, "east": east, "north": north},
+                "truncated": truncated,
+            }
+        )
+
+    def handle_iss_now(self, parsed: urllib.parse.ParseResult):  # noqa: ARG002
+        """Posição da ISS (gratuita) — exemplo de outro objeto rastreável."""
+        cached = cache_get("iss_now", 8.0)
+        if cached is not None:
+            self.send_json(cached)
+            return
+        urls = (
+            "https://api.wheretheiss.at/v1/satellites/25544",
+            "http://api.open-notify.org/iss-now.json",
+        )
+        last_err = None
+        for url in urls:
+            try:
+                status, raw = fetch_url(url, timeout=12, accept="application/json")
+                if status != 200 or not raw:
+                    last_err = f"http_{status}"
+                    continue
+                data = json.loads(raw.decode("utf-8", errors="replace"))
+                # normaliza formatos
+                if "iss_position" in data:
+                    lat = float(data["iss_position"]["latitude"])
+                    lon = float(data["iss_position"]["longitude"])
+                    payload = {
+                        "name": "ISS",
+                        "latitude": lat,
+                        "longitude": lon,
+                        "altitudeKm": None,
+                        "velocityKmh": None,
+                        "source": "open-notify.org",
+                        "timestamp": data.get("timestamp"),
+                    }
+                else:
+                    payload = {
+                        "name": data.get("name") or "ISS",
+                        "latitude": float(data["latitude"]),
+                        "longitude": float(data["longitude"]),
+                        "altitudeKm": _num(data.get("altitude")),
+                        "velocityKmh": _num(data.get("velocity")),
+                        "source": "wheretheiss.at",
+                        "timestamp": data.get("timestamp"),
+                    }
+                cache_set("iss_now", payload)
+                self.send_json(payload)
+                return
+            except Exception as exc:  # noqa: BLE001
+                last_err = str(exc)
+                continue
+        self.send_json({"error": "iss_failed", "detail": last_err}, 502)
+
+    def handle_earthquakes_live(self, parsed: urllib.parse.ParseResult):
+        """USGS Earthquake GeoJSON — feed público (sem chave)."""
+        qs = urllib.parse.parse_qs(parsed.query)
+        try:
+            west = float(qs.get("west", ["-180"])[0])
+            south = float(qs.get("south", ["-90"])[0])
+            east = float(qs.get("east", ["180"])[0])
+            north = float(qs.get("north", ["90"])[0])
+            min_mag = float(qs.get("minmagnitude", ["2.5"])[0])
+        except ValueError:
+            self.send_json({"error": "invalid_params"}, 400)
+            return
+        if west > east:
+            west, east = east, west
+        if south > north:
+            south, north = north, south
+        min_mag = max(0.0, min(9.0, min_mag))
+        # feed semanal M2.5+ (cache global) — filtra bbox no proxy
+        period = (qs.get("period", ["week"])[0] or "week").lower()
+        if period not in ("day", "week", "month"):
+            period = "week"
+        # escolha de feed USGS por magnitude mínima
+        if min_mag >= 4.5:
+            feed = f"4.5_{period}"
+        elif min_mag >= 2.5:
+            feed = f"2.5_{period}"
+        else:
+            feed = f"all_{period}"
+        cache_key = f"usgs:{feed}"
+        cached = cache_get(cache_key, 90.0)
+        if cached is None:
+            url = f"https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/{feed}.geojson"
+            try:
+                status, raw = fetch_url(url, timeout=25, accept="application/json")
+                if status != 200 or not raw:
+                    self.send_json({"error": "usgs_http", "detail": f"http_{status}"}, 502)
+                    return
+                data = json.loads(raw.decode("utf-8", errors="replace"))
+            except Exception as exc:  # noqa: BLE001
+                self.send_json({"error": "usgs_failed", "detail": str(exc)}, 502)
+                return
+            cache_set(cache_key, data)
+            cached = data
+
+        events = []
+        for f in cached.get("features") or []:
+            geom = f.get("geometry") or {}
+            coords = geom.get("coordinates") or []
+            if len(coords) < 2:
+                continue
+            try:
+                lon, lat = float(coords[0]), float(coords[1])
+                depth = float(coords[2]) if len(coords) > 2 else None
+            except (TypeError, ValueError):
+                continue
+            props = f.get("properties") or {}
+            mag = props.get("mag")
+            try:
+                mag_f = float(mag) if mag is not None else None
+            except (TypeError, ValueError):
+                mag_f = None
+            if mag_f is not None and mag_f < min_mag:
+                continue
+            if not (south <= lat <= north and west <= lon <= east):
+                continue
+            events.append(
+                {
+                    "id": f.get("id") or props.get("code"),
+                    "mag": mag_f,
+                    "place": props.get("place"),
+                    "time": props.get("time"),
+                    "updated": props.get("updated"),
+                    "url": props.get("url"),
+                    "tsunami": props.get("tsunami"),
+                    "type": props.get("type") or "earthquake",
+                    "latitude": lat,
+                    "longitude": lon,
+                    "depthKm": depth,
+                    "provider": "usgs",
+                }
+            )
+        events.sort(key=lambda e: (e.get("mag") is None, -(e.get("mag") or 0)))
+        max_n = 500
+        truncated = len(events) > max_n
+        events = events[:max_n]
+        self.send_json(
+            {
+                "count": len(events),
+                "events": events,
+                "source": "USGS Earthquake Hazards Program",
+                "feed": feed,
+                "minmagnitude": min_mag,
+                "period": period,
+                "truncated": truncated,
+                "bbox": {"west": west, "south": south, "east": east, "north": north},
+            }
+        )
+
+    def handle_eonet_events(self, parsed: urllib.parse.ParseResult):
+        """NASA EONET v3 — eventos naturais abertos (sem chave)."""
+        qs = urllib.parse.parse_qs(parsed.query)
+        try:
+            west = float(qs.get("west", ["-180"])[0])
+            south = float(qs.get("south", ["-90"])[0])
+            east = float(qs.get("east", ["180"])[0])
+            north = float(qs.get("north", ["90"])[0])
+            days = int(qs.get("days", ["30"])[0])
+            limit = int(qs.get("limit", ["200"])[0])
+        except ValueError:
+            self.send_json({"error": "invalid_params"}, 400)
+            return
+        if west > east:
+            west, east = east, west
+        if south > north:
+            south, north = north, south
+        days = max(1, min(365, days))
+        limit = max(10, min(500, limit))
+        cache_key = f"eonet:open:{days}:{limit}"
+        cached = cache_get(cache_key, 180.0)
+        if cached is None:
+            url = (
+                "https://eonet.gsfc.nasa.gov/api/v3/events/geojson"
+                f"?status=open&limit={limit}&days={days}"
+            )
+            try:
+                status, raw = fetch_url(url, timeout=30, accept="application/json")
+                if status != 200 or not raw:
+                    self.send_json({"error": "eonet_http", "detail": f"http_{status}"}, 502)
+                    return
+                data = json.loads(raw.decode("utf-8", errors="replace"))
+            except Exception as exc:  # noqa: BLE001
+                self.send_json({"error": "eonet_failed", "detail": str(exc)}, 502)
+                return
+            cache_set(cache_key, data)
+            cached = data
+
+        events = []
+        for f in cached.get("features") or []:
+            props = f.get("properties") or {}
+            geom = f.get("geometry") or {}
+            gtype = (geom.get("type") or "").lower()
+            coords = geom.get("coordinates")
+            lat = lon = None
+            if gtype == "point" and isinstance(coords, (list, tuple)) and len(coords) >= 2:
+                try:
+                    lon, lat = float(coords[0]), float(coords[1])
+                except (TypeError, ValueError):
+                    continue
+            elif gtype == "polygon" and coords:
+                # centroid simplificado do anel exterior
+                ring = coords[0] if coords else []
+                pts = []
+                for c in ring or []:
+                    if isinstance(c, (list, tuple)) and len(c) >= 2:
+                        try:
+                            pts.append((float(c[0]), float(c[1])))
+                        except (TypeError, ValueError):
+                            pass
+                if pts:
+                    lon = sum(p[0] for p in pts) / len(pts)
+                    lat = sum(p[1] for p in pts) / len(pts)
+            elif gtype == "linestring" and coords:
+                try:
+                    mid = coords[len(coords) // 2]
+                    lon, lat = float(mid[0]), float(mid[1])
+                except (TypeError, ValueError, IndexError):
+                    continue
+            elif gtype == "geometrycollection":
+                # pega primeiro ponto útil
+                for g in geom.get("geometries") or []:
+                    c = g.get("coordinates")
+                    if (g.get("type") or "").lower() == "point" and c and len(c) >= 2:
+                        try:
+                            lon, lat = float(c[0]), float(c[1])
+                            break
+                        except (TypeError, ValueError):
+                            continue
+            if lat is None or lon is None:
+                continue
+            if not (south <= lat <= north and west <= lon <= east):
+                continue
+            cats = props.get("categories") or []
+            cat_titles = []
+            for c in cats:
+                if isinstance(c, dict):
+                    cat_titles.append(c.get("title") or c.get("id") or "")
+                else:
+                    cat_titles.append(str(c))
+            events.append(
+                {
+                    "id": props.get("id") or f.get("id"),
+                    "title": props.get("title") or props.get("id"),
+                    "description": props.get("description"),
+                    "link": props.get("link") or props.get("source"),
+                    "date": props.get("date"),
+                    "categories": [x for x in cat_titles if x],
+                    "latitude": lat,
+                    "longitude": lon,
+                    "geometryType": gtype,
+                    "provider": "eonet",
+                }
+            )
+        max_n = 400
+        truncated = len(events) > max_n
+        events = events[:max_n]
+        self.send_json(
+            {
+                "count": len(events),
+                "events": events,
+                "source": "NASA EONET v3",
+                "days": days,
+                "truncated": truncated,
+                "bbox": {"west": west, "south": south, "east": east, "north": north},
+            }
+        )
+
+    def handle_satellite_goes(self, parsed: urllib.parse.ParseResult):
+        """
+        Lista frames GOES infravermelho (NOAA STAR) — estilo Climatempo satélite IV.
+        sector: ssa (América do Sul, padrão) | fd (disco completo) | taw (Atlântico tropical)
+        """
+        qs = urllib.parse.parse_qs(parsed.query)
+        sector = (qs.get("sector", ["ssa"])[0] or "ssa").lower()
+        if sector not in ("ssa", "fd", "taw"):
+            sector = "ssa"
+        size = (qs.get("size", ["900x540"])[0] or "900x540").lower()
+        allowed_sizes = ("450x270", "900x540", "1800x1080", "3600x2160")
+        if size not in allowed_sizes:
+            size = "900x540"
+        try:
+            limit = int(qs.get("limit", ["36"])[0])
+        except ValueError:
+            limit = 36
+        limit = max(6, min(72, limit))
+
+        sat = "GOES19"
+        band = "13"  # Clean IR longwave ~10.3 µm
+        if sector == "fd":
+            base = f"https://cdn.star.nesdis.noaa.gov/{sat}/ABI/FD/{band}/"
+            # Full disk naming: 20261922030_GOES19-ABI-FD-13-1808x1808.jpg etc.
+            size_fd = {
+                "450x270": "339x339",
+                "900x540": "678x678",
+                "1800x1080": "1808x1808",
+                "3600x2160": "5424x5424",
+            }.get(size, "678x678")
+            size_token = size_fd
+            file_re = re.compile(
+                rf'href="(\d{{11}}_{sat}-ABI-FD-{band}-{re.escape(size_token)}\.jpg)"',
+                re.I,
+            )
+            loop_gif = f"{base}{sat}-FD-{band}-678x678.gif"
+            sector_label = "Full Disk"
+        elif sector == "taw":
+            base = f"https://cdn.star.nesdis.noaa.gov/{sat}/ABI/SECTOR/taw/{band}/"
+            size_token = size
+            file_re = re.compile(
+                rf'href="(\d{{11}}_{sat}-ABI-taw-{band}-{re.escape(size_token)}\.jpg)"',
+                re.I,
+            )
+            loop_gif = f"{base}{sat}-TAW-{band}-900x540.gif"
+            sector_label = "Tropical Atlantic"
+        else:
+            base = f"https://cdn.star.nesdis.noaa.gov/{sat}/ABI/SECTOR/ssa/{band}/"
+            size_token = size
+            file_re = re.compile(
+                rf'href="(\d{{11}}_{sat}-ABI-ssa-{band}-{re.escape(size_token)}\.jpg)"',
+                re.I,
+            )
+            loop_gif = f"{base}{sat}-SSA-{band}-900x540.gif"
+            sector_label = "Southern South America"
+
+        cache_key = f"goes:{sat}:{sector}:{size_token}:{limit}"
+        cached = cache_get(cache_key, 120.0)
+        if cached is not None:
+            self.send_json(cached)
+            return
+
+        try:
+            status, raw = fetch_url(base, timeout=25, accept="text/html")
+            if status != 200 or not raw:
+                self.send_json({"error": "goes_http", "detail": f"http_{status}"}, 502)
+                return
+            html = raw.decode("utf-8", errors="replace")
+        except Exception as exc:  # noqa: BLE001
+            self.send_json({"error": "goes_failed", "detail": str(exc)}, 502)
+            return
+
+        names = sorted(set(file_re.findall(html)))
+        # fallback: tamanho alternativo comum se o pedido falhar
+        if not names and size_token != "900x540" and sector != "fd":
+            alt = "900x540"
+            file_re2 = re.compile(
+                rf'href="(\d{{11}}_{sat}-ABI-{sector}-{band}-{re.escape(alt)}\.jpg)"',
+                re.I,
+            )
+            names = sorted(set(file_re2.findall(html)))
+            size_token = alt
+        if not names and sector == "fd":
+            file_re2 = re.compile(
+                rf'href="(\d{{11}}_{sat}-ABI-FD-{band}-678x678\.jpg)"',
+                re.I,
+            )
+            names = sorted(set(file_re2.findall(html)))
+            size_token = "678x678"
+
+        frames = []
+        for name in names[-limit:]:
+            stamp = name.split("_", 1)[0]
+            iso = _goes_stamp_to_iso(stamp)
+            frames.append(
+                {
+                    "id": stamp,
+                    "file": name,
+                    "url": base + name,
+                    "time": iso,
+                    "timeUtc": iso,
+                }
+            )
+
+        latest_url = base + "latest.jpg"
+        # prefer same size "latest" alias when exists
+        if size_token and f"{size_token}.jpg" in html:
+            # 900x540.jpg is rolling latest for that size
+            pass
+        size_latest = base + f"{size_token}.jpg" if size_token else latest_url
+
+        payload = {
+            "count": len(frames),
+            "frames": frames,
+            "latest": size_latest if frames else latest_url,
+            "latestFull": latest_url,
+            "loopGif": loop_gif,
+            "sector": sector,
+            "sectorLabel": sector_label,
+            "satellite": sat,
+            "band": band,
+            "bandName": "Clean IR (10.3 µm)",
+            "size": size_token,
+            "source": "NOAA / NESDIS STAR",
+            "sourceUrl": base,
+            "attribution": "Imagens GOES © NOAA / NESDIS (domínio público)",
+            "note": "Infravermelho limpo — realça nuvens altas e frentes; não é foto óptica colorida.",
         }
         cache_set(cache_key, payload)
         self.send_json(payload)
@@ -1295,6 +2219,367 @@ def official_links(station, lat, lon):
     }
 
 
+def fetch_digitraffic_ais():
+    """Feed AIS gratuito (Digitraffic / Finlândia — cobertura principalmente Europa/Báltico)."""
+    cached = cache_get("digitraffic_ais", 45.0)
+    if cached is not None:
+        return cached
+    url = "https://meri.digitraffic.fi/api/ais/v1/locations"
+    headers = {
+        "User-Agent": BROWSER_UA,
+        "Accept": "application/json",
+        "Accept-Encoding": "gzip",
+    }
+    req = urllib.request.Request(url, headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=40) as resp:
+            raw = resp.read()
+            enc = (resp.headers.get("Content-Encoding") or "").lower()
+            if "gzip" in enc:
+                import gzip
+
+                raw = gzip.decompress(raw)
+            data = json.loads(raw.decode("utf-8", errors="replace"))
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError(f"digitraffic_failed:{exc}") from exc
+    features = data.get("features") or []
+    ships = []
+    for f in features:
+        geom = f.get("geometry") or {}
+        coords = geom.get("coordinates") or []
+        if len(coords) < 2:
+            continue
+        lon, lat = coords[0], coords[1]
+        try:
+            lon_f = float(lon)
+            lat_f = float(lat)
+        except (TypeError, ValueError):
+            continue
+        props = f.get("properties") or {}
+        mmsi = f.get("mmsi") or props.get("mmsi")
+        ships.append(
+            {
+                "mmsi": str(mmsi) if mmsi is not None else None,
+                "name": None,
+                "latitude": lat_f,
+                "longitude": lon_f,
+                "sog": _num(props.get("sog")),  # knots
+                "cog": _num(props.get("cog")),  # course over ground deg
+                "heading": _num(props.get("heading")),
+                "navStat": props.get("navStat"),
+                "timestamp": props.get("timestampExternal") or props.get("timestamp"),
+                "provider": "digitraffic",
+            }
+        )
+    payload = {
+        "ships": ships,
+        "count": len(ships),
+        "source": "Digitraffic AIS (Finland)",
+        "coverage": "Europe/Baltic primarily — free public AIS feed",
+        "updated": data.get("dataUpdatedTime"),
+    }
+    cache_set("digitraffic_ais", payload)
+    return payload
+
+
+# ─── AISStream (chave opcional) — WebSocket no backend ───────────────────────
+_AISSTREAM_LOCK = threading.Lock()
+_AISSTREAM = {
+    "key": "",
+    "ships": {},  # mmsi -> ship dict (com _seen epoch)
+    "bbox": None,  # (west,south,east,north)
+    "error": None,
+    "connected": False,
+    "thread": None,
+    "stop": None,  # threading.Event
+    "loop": None,
+    "last_msg": 0.0,
+    "started_at": 0.0,
+}
+# posições AIS expiram (não ficam eternas no mapa)
+_AIS_SHIP_TTL_S = 20 * 60
+
+
+def _bbox_overlaps_europe(west: float, south: float, east: float, north: float) -> bool:
+    """Digitraffic cobre principalmente Europa/Báltico (~ lat 35–72, lon −25–45)."""
+    eu_w, eu_s, eu_e, eu_n = -25.0, 35.0, 45.0, 72.0
+    return not (east < eu_w or west > eu_e or north < eu_s or south > eu_n)
+
+
+def _expand_stream_bbox(west: float, south: float, east: float, north: float):
+    """
+    Amplia a assinatura do stream além do viewport.
+    AIS terrestre chega aos poucos; bbox grande no litoral BR enche o cache mais rápido.
+    """
+    # padding generoso
+    pad_lon = max(3.0, (east - west) * 0.6)
+    pad_lat = max(2.5, (north - south) * 0.6)
+    w = west - pad_lon
+    e = east + pad_lon
+    s = south - pad_lat
+    n = north + pad_lat
+
+    # viewport sobre América do Sul atlântica → cobre costa BR principal
+    if s < 12 and n > -40 and w < -20 and e > -80:
+        w = min(w, -55.0)
+        e = max(e, -28.0)
+        s = min(s, -35.0)
+        n = max(n, 8.0)
+    # viewport sobre Caribe / Atlântico norte ocidental
+    elif s < 35 and n > 0 and w < -40 and e > -100:
+        w = min(w, -100.0)
+        e = max(e, -40.0)
+        s = min(s, 0.0)
+        n = max(n, 35.0)
+
+    # tamanho mínimo ~6°×4° para receber tráfego útil
+    if e - w < 6.0:
+        mid = (w + e) / 2
+        w, e = mid - 3.0, mid + 3.0
+    if n - s < 4.0:
+        mid = (s + n) / 2
+        s, n = mid - 2.0, mid + 2.0
+
+    return (
+        max(-180.0, w),
+        max(-90.0, s),
+        min(180.0, e),
+        min(90.0, n),
+    )
+
+
+def _aisstream_prune_locked(now: float | None = None):
+    """Remove navios antigos / limita tamanho do cache (chamar com lock)."""
+    now = now if now is not None else time.time()
+    ships = _AISSTREAM["ships"]
+    dead = [k for k, v in ships.items() if now - float(v.get("_seen") or 0) > _AIS_SHIP_TTL_S]
+    for k in dead:
+        ships.pop(k, None)
+    if len(ships) > 10000:
+        ordered = sorted(ships.items(), key=lambda kv: float(kv[1].get("_seen") or 0))
+        for k, _ in ordered[: len(ordered) // 5]:
+            ships.pop(k, None)
+
+
+def _aisstream_upsert(msg: dict):
+    """Extrai posição de mensagem AISStream."""
+    meta = msg.get("MetaData") or {}
+    mtype = msg.get("MessageType") or ""
+    body = (msg.get("Message") or {}).get(mtype) or {}
+    lat = meta.get("latitude")
+    lon = meta.get("longitude")
+    if lat is None:
+        lat = body.get("Latitude") if body.get("Latitude") is not None else body.get("latitude")
+    if lon is None:
+        lon = body.get("Longitude") if body.get("Longitude") is not None else body.get("longitude")
+    try:
+        lat_f = float(lat)
+        lon_f = float(lon)
+    except (TypeError, ValueError):
+        return
+    if not (-90 <= lat_f <= 90 and -180 <= lon_f <= 180):
+        return
+    # ignora posições nulas típicas de relatório inválido
+    if abs(lat_f) < 1e-6 and abs(lon_f) < 1e-6:
+        return
+    mmsi = meta.get("MMSI") or body.get("UserID") or body.get("UserId")
+    if mmsi is None:
+        return
+    mmsi_s = str(mmsi)
+    name = (meta.get("ShipName") or body.get("Name") or body.get("ShipName") or "").strip() or None
+    true_h = body.get("TrueHeading")
+    if true_h in (511, None, 511.0):
+        true_h = body.get("Heading")
+    now = time.time()
+    ship = {
+        "mmsi": mmsi_s,
+        "name": name,
+        "latitude": lat_f,
+        "longitude": lon_f,
+        "sog": _num(body.get("Sog") if body.get("Sog") is not None else body.get("sog")),
+        "cog": _num(body.get("Cog") if body.get("Cog") is not None else body.get("cog")),
+        "heading": _num(true_h),
+        "navStat": body.get("NavigationalStatus"),
+        "timestamp": meta.get("time_utc") or int(now * 1000),
+        "provider": "aisstream",
+        "_seen": now,
+    }
+    with _AISSTREAM_LOCK:
+        prev = _AISSTREAM["ships"].get(mmsi_s)
+        # mantém nome se o PositionReport veio sem ShipName
+        if not ship["name"] and prev and prev.get("name"):
+            ship["name"] = prev["name"]
+        _AISSTREAM["ships"][mmsi_s] = ship
+        _AISSTREAM["last_msg"] = now
+        if len(_AISSTREAM["ships"]) % 200 == 0:
+            _aisstream_prune_locked(now)
+
+
+def _aisstream_worker(api_key: str, bbox: tuple[float, float, float, float], stop_ev: threading.Event):
+    """Thread: mantém WebSocket AISStream e preenche cache de navios."""
+    if not HAS_WEBSOCKETS:
+        with _AISSTREAM_LOCK:
+            _AISSTREAM["error"] = "websockets_not_installed"
+            _AISSTREAM["connected"] = False
+        return
+
+    west, south, east, north = bbox
+    # BoundingBoxes: [[[lat1, lon1], [lat2, lon2]]] — formato oficial aisstream
+    boxes = [[[south, west], [north, east]]]
+
+    async def run():
+        url = "wss://stream.aisstream.io/v0/stream"
+        while not stop_ev.is_set():
+            try:
+                async with websockets.connect(
+                    url, ping_interval=20, ping_timeout=20, close_timeout=5, max_size=2**22
+                ) as ws:
+                    # Sem FilterMessageTypes: mais tráfego, melhor chance no litoral BR
+                    sub = {
+                        "APIKey": api_key,
+                        "BoundingBoxes": boxes,
+                    }
+                    await ws.send(json.dumps(sub))
+                    with _AISSTREAM_LOCK:
+                        _AISSTREAM["connected"] = True
+                        _AISSTREAM["error"] = None
+                    while not stop_ev.is_set():
+                        try:
+                            raw = await asyncio.wait_for(ws.recv(), timeout=45)
+                        except asyncio.TimeoutError:
+                            continue
+                        try:
+                            msg = json.loads(raw)
+                        except json.JSONDecodeError:
+                            continue
+                        if not isinstance(msg, dict):
+                            continue
+                        if msg.get("error"):
+                            with _AISSTREAM_LOCK:
+                                _AISSTREAM["error"] = str(msg.get("error"))
+                            break
+                        # erro de autenticação às vezes vem como text/errorMessage
+                        err_txt = msg.get("errorMessage") or msg.get("Error")
+                        if err_txt:
+                            with _AISSTREAM_LOCK:
+                                _AISSTREAM["error"] = str(err_txt)
+                            break
+                        if msg.get("MessageType") or msg.get("MetaData"):
+                            _aisstream_upsert(msg)
+            except Exception as exc:  # noqa: BLE001
+                with _AISSTREAM_LOCK:
+                    _AISSTREAM["connected"] = False
+                    _AISSTREAM["error"] = str(exc)
+                if stop_ev.wait(4.0):
+                    break
+        with _AISSTREAM_LOCK:
+            _AISSTREAM["connected"] = False
+
+    try:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        with _AISSTREAM_LOCK:
+            _AISSTREAM["loop"] = loop
+        loop.run_until_complete(run())
+    except Exception as exc:  # noqa: BLE001
+        with _AISSTREAM_LOCK:
+            _AISSTREAM["error"] = str(exc)
+            _AISSTREAM["connected"] = False
+    finally:
+        try:
+            loop = _AISSTREAM.get("loop")
+            if loop and not loop.is_closed():
+                loop.close()
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def ensure_aisstream(api_key: str, west: float, south: float, east: float, north: float) -> bool:
+    """
+    Garante thread AISStream ativa para a chave e bbox.
+    Retorna True se a thread foi (re)iniciada agora (primeiro pedido deve esperar mais).
+    """
+    key = (api_key or "").strip()
+    if not key:
+        return False
+    if not HAS_WEBSOCKETS:
+        with _AISSTREAM_LOCK:
+            _AISSTREAM["error"] = "websockets_not_installed"
+        return False
+
+    west = max(-180.0, min(180.0, west))
+    east = max(-180.0, min(180.0, east))
+    south = max(-90.0, min(90.0, south))
+    north = max(-90.0, min(90.0, north))
+    if west > east:
+        west, east = east, west
+    if south > north:
+        south, north = north, south
+
+    stream_bbox = _expand_stream_bbox(west, south, east, north)
+    view = (west, south, east, north)
+
+    with _AISSTREAM_LOCK:
+        same_key = _AISSTREAM["key"] == key
+        old_bbox = _AISSTREAM["bbox"]
+        need_restart = not same_key or old_bbox is None
+        if old_bbox and not need_restart:
+            ow, os_, oe, on_ = old_bbox
+            # reinicia se o viewport saiu do bbox do stream (com margem)
+            if (
+                view[0] < ow + 0.5
+                or view[1] < os_ + 0.5
+                or view[2] > oe - 0.5
+                or view[3] > on_ - 0.5
+            ):
+                need_restart = True
+            # zoom-out grande
+            if (view[2] - view[0]) > (oe - ow) * 1.2 or (view[3] - view[1]) > (on_ - os_) * 1.2:
+                need_restart = True
+        thr = _AISSTREAM["thread"]
+        alive = thr is not None and thr.is_alive()
+        if alive and not need_restart:
+            return False
+        if thr and thr.is_alive() and _AISSTREAM["stop"]:
+            _AISSTREAM["stop"].set()
+        stop_ev = threading.Event()
+        if not same_key:
+            _AISSTREAM["ships"] = {}
+        _AISSTREAM["key"] = key
+        _AISSTREAM["bbox"] = stream_bbox
+        _AISSTREAM["stop"] = stop_ev
+        _AISSTREAM["error"] = None
+        _AISSTREAM["started_at"] = time.time()
+        t = threading.Thread(
+            target=_aisstream_worker,
+            args=(key, stream_bbox, stop_ev),
+            name="aisstream",
+            daemon=True,
+        )
+        _AISSTREAM["thread"] = t
+        t.start()
+        return True
+
+
+def aisstream_ships_in_bbox(west, south, east, north):
+    with _AISSTREAM_LOCK:
+        _aisstream_prune_locked()
+        ships = list(_AISSTREAM["ships"].values())
+        err = _AISSTREAM["error"]
+        connected = _AISSTREAM["connected"]
+        last = _AISSTREAM["last_msg"]
+    out = []
+    for s in ships:
+        lat = s.get("latitude")
+        lon = s.get("longitude")
+        if lat is None or lon is None:
+            continue
+        if south <= lat <= north and west <= lon <= east:
+            # não vaza campo interno _seen
+            out.append({k: v for k, v in s.items() if not str(k).startswith("_")})
+    return out, err, connected, last
+
+
 def main():
     server = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
     print(f"KeClima em http://localhost:{PORT}")
@@ -1302,9 +2587,16 @@ def main():
     print("Focos unidos: /api/fires/hotspots  (INPE + FIRMS)")
     print("Desmate DETER: /api/deforestation/alerts")
     print("Proxy INMET:  /api/inmet/nearest?lat=&lon=")
+    print("Avisos INMET: /api/inmet/alerts?lat=&lon=  (Alert-AS oficiais)")
     print("Voos ao vivo: /api/flights/live?west=&south=&east=&north=  (OpenSky)")
     print("Aeronave:     /api/flights/aircraft?icao24=")
     print("Rota:         /api/flights/route?callsign=")
+    print("Navios AIS:   /api/ships/live?west=&south=&east=&north=  (Digitraffic EU + AISStream key)")
+    print("  AISStream:  key=... query ou env AISSTREAM_API_KEY  (pip install websockets)")
+    print("ISS:          /api/iss/now  (WhereTheISS / Open Notify)")
+    print("Terremotos:   /api/earthquakes/live?west=&south=&east=&north=  (USGS)")
+    print("EONET:        /api/eonet/events?west=&south=&east=&north=  (NASA eventos naturais)")
+    print("Satélite IV:  /api/satellite/goes?sector=ssa|fd|taw  (NOAA GOES IR)")
     try:
         server.serve_forever()
     except KeyboardInterrupt:

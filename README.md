@@ -2,7 +2,7 @@
 
 PWA de meteorologia e território (Brasil): clima, qualidade do ar, mapa, focos de fogo e desmatamento.
 
-**Versão 0.6.0** · HTML/CSS/JS ES Modules · sem React/Vue/Angular
+**Versão 0.7.4** · HTML/CSS/JS ES Modules · sem React/Vue/Angular
 
 ## Executar
 
@@ -12,7 +12,7 @@ python3 serve.py 8080
 # http://localhost:8080
 ```
 
-> Use **`serve.py`** (proxy para FIRMS, INMET, DETER, OpenSky).  
+> Use **`serve.py`** (proxy para FIRMS, INMET, DETER, OpenSky, AIS, ISS, USGS, EONET e GOES).
 > `python3 -m http.server` só serve arquivos estáticos — camadas oficiais falham por CORS.
 
 | Variável | Uso |
@@ -26,10 +26,11 @@ python3 serve.py 8080
 | Clima | Open-Meteo (previsão, UV, vento, etc.) |
 | Ar | Open-Meteo Air Quality |
 | Observado BR | INMET (estação mais próxima) |
-| Mapa | OSM, Carto, OpenTopo, satélite/topo Esri, radar RainViewer |
+| Mapa | OSM, Carto, OpenTopo, satélite/topo Esri, radar RainViewer, voos, navios, ISS e riscos |
 | Focos | INPE Queimadas + NASA FIRMS (filtros) |
 | Desmate | INPE DETER + PRODES |
 | Voos | OpenSky (proxy) |
+| Satélite IV | GOES Clean IR (NOAA/NESDIS) em Gráficos → Satélite IV |
 | UI | Painéis S/M/L, temas, pt/en/es, PWA offline |
 
 ## Testes

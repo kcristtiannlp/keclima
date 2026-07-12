@@ -10,21 +10,23 @@ import { t } from '../utils/i18n.js';
 import { API, CACHE_TTL } from '../config.js';
 import { fetchMapGrid } from '../api/providers/openMeteo.js';
 import { fetchAirQualityGrid } from '../api/providers/airQuality.js';
-import { fetchFireHotspots, bboxAround } from '../api/providers/firms.js';
-import {
-  fetchDeforestationAlerts,
-  bboxAroundPlace,
-} from '../api/providers/deforestation.js';
+import { fetchFireHotspots } from '../api/providers/firms.js';
+import { fetchDeforestationAlerts } from '../api/providers/deforestation.js';
 import {
   fetchLiveFlights,
   fetchAircraftDetails,
   fetchFlightRoute,
 } from '../api/providers/opensky.js';
+import { fetchLiveShips, fetchIssPosition } from '../api/providers/ships.js';
+import { fetchEarthquakes, fetchEonetEvents } from '../api/providers/disasters.js';
 import { cacheGet, cacheSet } from '../services/cacheService.js';
 import { formatTemp, formatWind, formatPressure } from '../utils/units.js';
 import { aqiLevel } from '../utils/weather.js';
 import { fireWeatherScore, fireWeatherMeta } from '../utils/weather.js';
-import { toastError, toastWarning } from '../services/toastService.js';
+import { toast, toastError, toastWarning } from '../services/toastService.js';
+import { getMapBBox, sampleGridInBBox, bboxCacheKey } from '../utils/mapBounds.js';
+import { loadWeatherFor } from '../services/weatherService.js';
+import { ROUTES } from '../router.js';
 
 const EMPTY_TILE =
   'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
@@ -74,6 +76,25 @@ export class MapWidget extends Widget {
     this._flightTracks = new Map();
     this._flightsSource = 'OpenSky Network';
     this._flightsLastTick = 0;
+    this.shipsLayer = null;
+    this._shipsEnabled = false;
+    this._shipsAbort = null;
+    this._shipsStatus = null;
+    this._shipsTimer = null;
+    this.issLayer = null;
+    this._issEnabled = false;
+    this._issAbort = null;
+    this._issTimer = null;
+    this._issMarker = null;
+    this._issStatus = null;
+    this.earthquakesLayer = null;
+    this._eqEnabled = false;
+    this._eqAbort = null;
+    this._eqStatus = null;
+    this.eonetLayer = null;
+    this._eonetEnabled = false;
+    this._eonetAbort = null;
+    this._eonetStatus = null;
     /** @type {'all'|'inpe'|'firms'|'both'} */
     this._fireSourceFilter = 'all';
     this._fireDays = 1;
@@ -99,6 +120,17 @@ export class MapWidget extends Widget {
   destroy() {
     this._stopFlightsLive();
     this._stopRadarAnim();
+    this._stopSatAnim();
+    this._stopIssLive();
+    this._stopShipsLive();
+    if (this._dataMoveTimer) {
+      clearTimeout(this._dataMoveTimer);
+      this._dataMoveTimer = null;
+    }
+    if (this.map && this._dataMoveHandler) {
+      this.map.off('moveend', this._dataMoveHandler);
+      this._dataMoveHandler = null;
+    }
     if (this._firesAbort) {
       this._firesAbort.abort();
       this._firesAbort = null;
@@ -106,6 +138,22 @@ export class MapWidget extends Widget {
     if (this._flightsAbort) {
       this._flightsAbort.abort();
       this._flightsAbort = null;
+    }
+    if (this._shipsAbort) {
+      this._shipsAbort.abort();
+      this._shipsAbort = null;
+    }
+    if (this._issAbort) {
+      this._issAbort.abort();
+      this._issAbort = null;
+    }
+    if (this._eqAbort) {
+      this._eqAbort.abort();
+      this._eqAbort = null;
+    }
+    if (this._eonetAbort) {
+      this._eonetAbort.abort();
+      this._eonetAbort = null;
     }
     if (this._deterAbort) {
       this._deterAbort.abort();
@@ -120,6 +168,62 @@ export class MapWidget extends Widget {
       this.map = null;
     }
     super.destroy();
+  }
+
+  /**
+   * Camadas ligadas no mapa? (LayerGroup / tile)
+   * @param {object|null|undefined} layer
+   */
+  _layerOn(layer) {
+    return !!(this.map && layer && this.map.hasLayer(layer));
+  }
+
+  /**
+   * Recarrega dados conforme viewport atual (não só a cidade salva).
+   * @param {{ silent?: boolean, force?: boolean }} [opts]
+   */
+  async _reloadViewportLayers(opts = {}) {
+    if (!this.map) return;
+    const tasks = [];
+    if (
+      this._layerOn(this.tempLayer) ||
+      this._layerOn(this.windLayer) ||
+      this._layerOn(this.cloudsLayer) ||
+      this._layerOn(this.precipFcLayer) ||
+      this._layerOn(this.humidityLayer) ||
+      this._layerOn(this.feelsLayer) ||
+      this._layerOn(this.pressureLayer) ||
+      this._layerOn(this.fireWxLayer)
+    ) {
+      tasks.push(this._loadGrid({ force: opts.force }));
+    }
+    if (this._layerOn(this.aqiLayer)) {
+      tasks.push(this._loadAqiGrid({ force: opts.force }));
+    }
+    if (this._layerOn(this.firesLayer)) {
+      tasks.push(this._loadFires({ force: opts.force }));
+    }
+    if (this._layerOn(this.deterLayer)) {
+      tasks.push(this._loadDeter());
+    }
+    if (this._flightsEnabled) {
+      tasks.push(this._loadFlights({ silent: true }));
+    }
+    if (this._shipsEnabled) {
+      tasks.push(this._loadShips({ silent: true }));
+    }
+    if (this._issEnabled) {
+      tasks.push(this._loadIss({ silent: true }));
+    }
+    if (this._eqEnabled) {
+      tasks.push(this._loadEarthquakes({ silent: true }));
+    }
+    if (this._eonetEnabled) {
+      tasks.push(this._loadEonet({ silent: true }));
+    }
+    if (tasks.length) {
+      await Promise.allSettled(tasks);
+    }
   }
 
   render() {
@@ -141,7 +245,7 @@ export class MapWidget extends Widget {
     const gWeather = this._addLayerGroup(controls, t('map_group_weather'), true);
     const gRisk = this._addLayerGroup(controls, t('map_group_risk'), true);
     const gTerritory = this._addLayerGroup(controls, t('map_group_territory'), false);
-    const gTraffic = this._addLayerGroup(controls, t('map_group_traffic'), false);
+    const gTraffic = this._addLayerGroup(controls, t('map_group_traffic'), true);
 
     const tools = el('div', { className: 'map-tools-bar' });
     this._opacityInput = el('input', {
@@ -161,9 +265,10 @@ export class MapWidget extends Widget {
       el('label', { className: 'map-tool-label', text: t('map_opacity') }, [this._opacityInput]),
       el('button', {
         type: 'button',
-        className: 'btn btn-sm map-tool-btn',
-        text: t('map_recenter'),
-        onClick: () => this._recenter(),
+        className: 'btn btn-sm map-tool-btn map-tool-gps',
+        text: `📍 ${t('map_gps')}`,
+        title: t('map_gps_hint'),
+        onClick: () => this._goToMyLocation(),
       }),
       el('button', {
         type: 'button',
@@ -179,6 +284,10 @@ export class MapWidget extends Widget {
 
     this._firesStatus = el('p', { className: 'map-fires-status muted hidden', text: '' });
     this._flightsStatus = el('p', { className: 'map-flights-status muted hidden', text: '' });
+    this._shipsStatus = el('p', { className: 'map-ships-status muted hidden', text: '' });
+    this._issStatus = el('p', { className: 'map-iss-status muted hidden', text: '' });
+    this._eqStatus = el('p', { className: 'map-eq-status muted hidden', text: '' });
+    this._eonetStatus = el('p', { className: 'map-eonet-status muted hidden', text: '' });
     this._controls = controls;
     this.body.append(
       controls,
@@ -187,6 +296,10 @@ export class MapWidget extends Widget {
       this._fireFilterBar,
       this._firesStatus,
       this._flightsStatus,
+      this._shipsStatus,
+      this._issStatus,
+      this._eqStatus,
+      this._eonetStatus,
       mapEl
     );
 
@@ -205,6 +318,9 @@ export class MapWidget extends Widget {
     } catch {
       /* ignore */
     }
+
+    // Botão GPS flutuante (estilo app de mapas)
+    this._addLocateControl();
 
     this._initBaseLayers();
 
@@ -264,8 +380,26 @@ export class MapWidget extends Widget {
     this._setupFireWeather(gRisk);
     this._setupAqi(gRisk);
     this._setupFires(gRisk);
+    this._setupEarthquakes(gRisk);
+    this._setupEonet(gRisk);
     this._setupDeforestation(gTerritory);
     this._setupFlights(gTraffic);
+    this._setupShips(gTraffic);
+    this._setupIss(gTraffic);
+
+    // Ao mover/zoom: recarrega camadas (debounce — evita abort/rate limit)
+    this._dataMoveTimer = null;
+    this._dataMoveHandler = () => {
+      if (this._dataMoveTimer) {
+        clearTimeout(this._dataMoveTimer);
+      }
+      this._dataMoveTimer = setTimeout(() => {
+        this._dataMoveTimer = null;
+        this._reloadViewportLayers({ silent: true });
+      }, 700);
+    };
+    this.map.on('moveend', this._dataMoveHandler);
+
     requestAnimationFrame(() => this.map?.invalidateSize());
   }
 
@@ -423,32 +557,121 @@ export class MapWidget extends Widget {
     );
   }
 
-  _recenter() {
-    const loc = this.data.location;
-    if (!this.map || !loc) {
+  /**
+   * Controle Leaflet: ícone GPS no canto do mapa.
+   */
+  _addLocateControl() {
+    if (!this.map || typeof L === 'undefined') {
       return;
     }
-    this.map.setView([loc.latitude, loc.longitude], Math.max(this.map.getZoom(), 8));
-    this.marker?.setLatLng([loc.latitude, loc.longitude]);
+    const self = this;
+    const LocateControl = L.Control.extend({
+      options: { position: 'bottomright' },
+      onAdd() {
+        const wrap = L.DomUtil.create('div', 'leaflet-bar leaflet-control map-locate-control');
+        const btn = L.DomUtil.create('a', 'map-locate-btn', wrap);
+        btn.href = '#';
+        btn.role = 'button';
+        btn.title = t('map_gps_hint');
+        btn.setAttribute('aria-label', t('map_gps'));
+        btn.innerHTML = '<span class="map-locate-icon" aria-hidden="true">📍</span>';
+        L.DomEvent.disableClickPropagation(wrap);
+        L.DomEvent.on(btn, 'click', (e) => {
+          L.DomEvent.preventDefault(e);
+          self._goToMyLocation(btn);
+        });
+        self._locateBtn = btn;
+        return wrap;
+      },
+    });
+    this._locateControl = new LocateControl();
+    this._locateControl.addTo(this.map);
+  }
+
+  /**
+   * Volta ao local atual (GPS do aparelho) e atualiza o pin.
+   * @param {HTMLElement} [btnEl]
+   */
+  async _goToMyLocation(btnEl) {
+    if (!this.map) {
+      return;
+    }
+    const btn = btnEl || this._locateBtn;
+    if (btn) {
+      btn.classList.add('is-loading');
+    }
+
+    try {
+      toast(t('locating'), { type: 'info', duration: 1800 });
+      const { getBrowserPosition, resolvePlace, isCoarseAccuracy } = await import(
+        '../services/locationService.js'
+      );
+      const pos = await getBrowserPosition();
+      const place = await resolvePlace(pos.latitude, pos.longitude);
+      const loc = {
+        ...place,
+        latitude: pos.latitude,
+        longitude: pos.longitude,
+      };
+
+      if (isCoarseAccuracy?.(pos.accuracy)) {
+        const meters =
+          pos.accuracy != null && !Number.isNaN(pos.accuracy)
+            ? ` (~${Math.round(pos.accuracy)} m)`
+            : '';
+        toastWarning(`${t('location_coarse')}${meters}`);
+      }
+
+      // Atualiza clima/estado global e o pin
+      await loadWeatherFor(loc);
+      this.data = { ...this.data, location: loc };
+      this.map.setView([loc.latitude, loc.longitude], Math.max(this.map.getZoom(), 12), {
+        animate: true,
+      });
+      if (this.marker) {
+        this.marker.setLatLng([loc.latitude, loc.longitude]);
+        this.marker.setIcon(locationPinIcon(loc.name || t('map_gps')));
+        if (loc.name) {
+          this.marker.bindPopup(loc.name).openPopup();
+        }
+      } else {
+        this.marker = L.marker([loc.latitude, loc.longitude], {
+          icon: locationPinIcon(loc.name || t('map_gps')),
+          zIndexOffset: 600,
+        }).addTo(this.map);
+      }
+      // Pulse visual no botão
+      if (btn) {
+        btn.classList.add('is-active');
+        setTimeout(() => btn.classList.remove('is-active'), 1200);
+      }
+    } catch (err) {
+      console.warn('[MapWidget] GPS', err);
+      // Fallback: recentra no local já conhecido do app
+      const loc = this.data.location;
+      if (loc?.latitude != null) {
+        this.map.setView([loc.latitude, loc.longitude], Math.max(this.map.getZoom(), 11), {
+          animate: true,
+        });
+        this.marker?.setLatLng([loc.latitude, loc.longitude]);
+        toastWarning(t('map_gps_fallback'));
+      } else {
+        toastError(t('error_location'));
+      }
+    } finally {
+      if (btn) {
+        btn.classList.remove('is-loading');
+      }
+    }
+  }
+
+  /** @deprecated use _goToMyLocation */
+  _recenter() {
+    void this._goToMyLocation();
   }
 
   async _reloadActiveLayers() {
-    // limpa cache de grade/focos da sessão (chaves conhecidas)
-    if (this.map?.hasLayer(this.tempLayer) || this.map?.hasLayer(this.cloudsLayer)) {
-      await this._loadGrid({ force: true });
-    }
-    if (this.map?.hasLayer(this.aqiLayer)) {
-      await this._loadAqiGrid({ force: true });
-    }
-    if (this.map?.hasLayer(this.firesLayer)) {
-      await this._loadFires({ force: true });
-    }
-    if (this.map?.hasLayer(this.deterLayer)) {
-      await this._loadDeter();
-    }
-    if (this._flightsEnabled) {
-      await this._loadFlights({ silent: true });
-    }
+    await this._reloadViewportLayers({ force: true });
   }
 
   _applyOverlayOpacity() {
@@ -682,6 +905,14 @@ export class MapWidget extends Widget {
             attribution: 'IR &copy; RainViewer',
           })
         );
+        this._satAnim = {
+          host,
+          frames: satFrames,
+          index: satFrames.length - 1,
+          timer: null,
+          layer: this.layers.satellite,
+          nativeZoom,
+        };
         this._addLayerToggle(
           controls,
           'satellite',
@@ -692,7 +923,9 @@ export class MapWidget extends Widget {
             if (on) {
               this.layers.satellite.addTo(this.map);
               this.layers.satellite.setOpacity(this._overlayOpacity);
+              this._startSatAnim();
             } else {
+              this._stopSatAnim();
               this.map.removeLayer(this.layers.satellite);
             }
           },
@@ -713,6 +946,30 @@ export class MapWidget extends Widget {
       : '—';
     this._radarTimeEl.classList.remove('hidden');
     this._radarTimeEl.textContent = `${t('map_radar_frame')}: ${label} (${this._radarAnim.index + 1}/${this._radarAnim.frames.length})`;
+  }
+
+  _startSatAnim() {
+    this._stopSatAnim();
+    const anim = this._satAnim;
+    if (!anim?.frames?.length || !anim.layer) return;
+    anim.timer = setInterval(() => {
+      if (!this.map || !this.map.hasLayer(anim.layer)) {
+        this._stopSatAnim();
+        return;
+      }
+      anim.index = (anim.index + 1) % anim.frames.length;
+      const fr = anim.frames[anim.index];
+      if (!fr?.path) return;
+      const url = `${anim.host}${fr.path}/256/{z}/{x}/{y}/0/0_0.png`;
+      anim.layer.setUrl(url);
+    }, 700);
+  }
+
+  _stopSatAnim() {
+    if (this._satAnim?.timer) {
+      clearInterval(this._satAnim.timer);
+      this._satAnim.timer = null;
+    }
   }
 
   /**
@@ -972,23 +1229,20 @@ export class MapWidget extends Widget {
    * @param {{ force?: boolean }} [opts]
    */
   async _loadAqiGrid(opts = {}) {
-    const loc = this.data.location;
-    if (!loc || !this.aqiLayer) {
+    if (!this.aqiLayer || !this.map) {
       return;
     }
     if (this._aqiAbort) {
       this._aqiAbort.abort();
     }
     this._aqiAbort = new AbortController();
-    const key = `mapaqi:v2:${loc.latitude.toFixed(2)},${loc.longitude.toFixed(2)}`;
+    const box = getMapBBox(this.map);
+    const key = `mapaqi:v3:${bboxCacheKey(box, 1)}`;
     let points = opts.force ? null : cacheGet(key);
     if (!points) {
       try {
-        points = await fetchAirQualityGrid(
-          loc.latitude,
-          loc.longitude,
-          this._aqiAbort.signal
-        );
+        const sample = sampleGridInBBox(box, { maxPoints: 49 });
+        points = await fetchAirQualityGrid(sample, undefined, this._aqiAbort.signal);
         cacheSet(key, points, CACHE_TTL.airQuality || 15 * 60 * 1000);
       } catch (err) {
         if (err?.name === 'AbortError') {
@@ -1065,27 +1319,19 @@ export class MapWidget extends Widget {
       this._firesStatus.textContent = t('fires_loading');
     }
 
-    const loc = this.data.location;
-    const lat = loc?.latitude ?? this.map.getCenter().lat;
-    const lon = loc?.longitude ?? this.map.getCenter().lng;
-
-    // Área ao redor da cidade + bounds do mapa (o que for mais útil)
-    const box = bboxAround(lat, lon, 5);
+    // Viewport completo do mapa (não só a cidade) — pode ser continente/mundo
+    let box;
     try {
-      const b = this.map.getBounds();
-      if (b) {
-        box.west = Math.min(box.west, b.getWest());
-        box.south = Math.min(box.south, b.getSouth());
-        box.east = Math.max(box.east, b.getEast());
-        box.north = Math.max(box.north, b.getNorth());
-      }
+      box = getMapBBox(this.map, 0.05);
     } catch {
-      /* ignore */
+      const c = this.map.getCenter();
+      box = { west: c.lng - 40, south: c.lat - 30, east: c.lng + 40, north: c.lat + 30 };
     }
+    const lat = (box.south + box.north) / 2;
+    const lon = (box.west + box.east) / 2;
 
     try {
       if (opts.force) {
-        // força bypass de cache alterando levemente o bbox
         box.west -= 0.001;
       }
       const result = await fetchFireHotspots({
@@ -1199,18 +1445,12 @@ export class MapWidget extends Widget {
     if (!this.map) {
       return;
     }
+    // Poll periódico; pan/zoom usa _dataMoveHandler (viewport global)
     this._flightsTimer = setInterval(() => {
       if (this._flightsEnabled) {
         this._loadFlights({ silent: true });
       }
     }, FLIGHTS_REFRESH_MS);
-
-    this._flightsMoveHandler = () => {
-      if (this._flightsEnabled) {
-        this._loadFlights({ silent: true });
-      }
-    };
-    this.map.on('moveend', this._flightsMoveHandler);
     this._flightsLastTick = performance.now();
     this._tickFlightsAnimation();
   }
@@ -1223,10 +1463,6 @@ export class MapWidget extends Widget {
     if (this._flightsRaf) {
       cancelAnimationFrame(this._flightsRaf);
       this._flightsRaf = null;
-    }
-    if (this.map && this._flightsMoveHandler) {
-      this.map.off('moveend', this._flightsMoveHandler);
-      this._flightsMoveHandler = null;
     }
   }
 
@@ -1504,10 +1740,13 @@ export class MapWidget extends Widget {
     }
     this._flightsStatus.classList.remove('hidden');
     const n = this._flightTracks.size;
+    const meta = this._flightsMeta || {};
+    const trunc = meta.truncated ? ` · ${t('flights_truncated')}` : '';
+    const scope = meta.scope ? ` · ${meta.scope}` : '';
     this._flightsStatus.textContent =
       n === 0
         ? t('flights_none')
-        : `${t('flights_count')}: ${n} · ${this._flightsSource} · ${t('flights_live_motion')}`;
+        : `${t('flights_count')}: ${n} · ${this._flightsSource}${scope}${trunc}`;
   }
 
   /**
@@ -1532,21 +1771,10 @@ export class MapWidget extends Widget {
 
     let box;
     try {
-      const b = this.map.getBounds();
-      // margem + área mínima (zoom muito aberto/fechado)
-      let padLat = (b.getNorth() - b.getSouth()) * 0.15;
-      let padLon = (b.getEast() - b.getWest()) * 0.15;
-      padLat = Math.max(padLat, 0.35);
-      padLon = Math.max(padLon, 0.35);
-      box = {
-        west: b.getWest() - padLon,
-        south: b.getSouth() - padLat,
-        east: b.getEast() + padLon,
-        north: b.getNorth() + padLat,
-      };
+      box = getMapBBox(this.map, 0.12);
     } catch {
       const c = this.map.getCenter();
-      const d = 2;
+      const d = 40;
       box = {
         west: c.lng - d,
         south: c.lat - d,
@@ -1558,6 +1786,7 @@ export class MapWidget extends Widget {
     try {
       const result = await fetchLiveFlights({
         ...box,
+        includeGround: true,
         signal: this._flightsAbort.signal,
       });
       if (gen !== this._flightsLoadGen || !this._flightsEnabled) {
@@ -1565,6 +1794,11 @@ export class MapWidget extends Widget {
       }
 
       this._flightsSource = result.source || 'OpenSky Network';
+      this._flightsMeta = {
+        count: result.count,
+        scope: result.scope,
+        truncated: result.truncated,
+      };
       const seen = new Set();
       for (const f of result.flights) {
         if (!f.icao24 || f.latitude == null || f.longitude == null) {
@@ -1577,11 +1811,13 @@ export class MapWidget extends Widget {
       for (const [id, tr] of this._flightTracks) {
         if (seen.has(id)) {
           tr.seenMs = now;
+        } else {
+          // remove imediatamente quem saiu do viewport (evita “sumir devagar”)
+          tr.seenMs = now - FLIGHTS_STALE_MS - 1;
         }
       }
       this._pruneStaleFlights();
       this._updateFlightsStatusCount();
-      // garante camada no mapa (caso tenha sido removida por engano)
       if (this.flightsLayer && !this.map.hasLayer(this.flightsLayer)) {
         this.flightsLayer.addTo(this.map);
       }
@@ -1590,22 +1826,523 @@ export class MapWidget extends Widget {
         return;
       }
       console.warn('[MapWidget] flights', err);
+      const msgKey =
+        err?.code === 'rate_limited'
+          ? 'flights_rate_limited'
+          : err?.code === 'flights_proxy_missing' || err?.code === 'timeout'
+            ? 'flights_error_proxy'
+            : 'flights_error';
       if (this._flightsStatus) {
         this._flightsStatus.classList.remove('hidden');
-        this._flightsStatus.textContent =
-          err?.code === 'flights_proxy_missing' || err?.code === 'rate_limited'
-            ? t(err.code === 'rate_limited' ? 'flights_rate_limited' : 'flights_error_proxy')
-            : t('flights_error');
+        this._flightsStatus.textContent = t(msgKey);
       }
       if (!opts.silent) {
-        if (err?.code === 'flights_proxy_missing' || String(err?.message || '').includes('Failed')) {
-          toastError(t('flights_error_proxy'));
-        } else if (err?.code === 'rate_limited') {
-          toastWarning(t('flights_rate_limited'));
+        if (msgKey === 'flights_rate_limited') {
+          toastWarning(t(msgKey));
         } else {
-          toastError(t('flights_error'));
+          toastError(t(msgKey));
         }
       }
+    }
+  }
+
+  _setupShips(controls) {
+    this.shipsLayer = L.layerGroup();
+    this.layers.ships = this.shipsLayer;
+
+    this._addLayerToggle(
+      controls,
+      'ships',
+      t('layer_ships'),
+      false,
+      async (on) => {
+        if (!this.map) return;
+        if (on) {
+          this._shipsEnabled = true;
+          this.shipsLayer.addTo(this.map);
+          await this._loadShips();
+          this._startShipsLive();
+        } else {
+          this._shipsEnabled = false;
+          this._stopShipsLive();
+          this.map.removeLayer(this.shipsLayer);
+          this.shipsLayer.clearLayers();
+          this._shipsStatus?.classList.add('hidden');
+        }
+      },
+      t('layer_ships_hint')
+    );
+  }
+
+  _startShipsLive() {
+    this._stopShipsLive();
+    this._shipsFastPollUntil = Date.now() + 45000;
+    const tick = () => {
+      if (!this._shipsEnabled) return;
+      this._loadShips({ silent: true });
+      const fast = Date.now() < (this._shipsFastPollUntil || 0);
+      this._shipsTimer = setTimeout(tick, fast ? 4000 : 14000);
+    };
+    this._shipsTimer = setTimeout(tick, 4000);
+  }
+
+  _stopShipsLive() {
+    if (this._shipsTimer) {
+      clearTimeout(this._shipsTimer);
+      this._shipsTimer = null;
+    }
+    this._shipsFastPollUntil = 0;
+  }
+
+  /**
+   * @param {{ silent?: boolean }} [opts]
+   */
+  async _loadShips(opts = {}) {
+    if (!this.map || !this.shipsLayer || !this._shipsEnabled) {
+      return;
+    }
+    if (this._shipsAbort) {
+      this._shipsAbort.abort();
+    }
+    this._shipsAbort = new AbortController();
+
+    if (this._shipsStatus && !opts.silent) {
+      this._shipsStatus.classList.remove('hidden');
+      this._shipsStatus.textContent = t('ships_loading');
+    }
+
+    let box;
+    try {
+      box = getMapBBox(this.map, 0.08);
+    } catch {
+      const c = this.map.getCenter();
+      box = { west: c.lng - 5, south: c.lat - 5, east: c.lng + 5, north: c.lat + 5 };
+    }
+
+    try {
+      const result = await fetchLiveShips({
+        ...box,
+        signal: this._shipsAbort.signal,
+      });
+      this.shipsLayer.clearLayers();
+      for (const s of result.ships) {
+        if (s.latitude == null || s.longitude == null) continue;
+        const heading =
+          s.heading != null && Number(s.heading) < 360 ? Number(s.heading) : s.cog || 0;
+        const icon = boatIcon(heading, s.sog);
+        const label = (s.name || s.mmsi || 'AIS').toString().trim();
+        const marker = L.marker([s.latitude, s.longitude], {
+          icon,
+          title: label,
+          zIndexOffset: 350,
+        });
+        const sog = s.sog != null ? `${Number(s.sog).toFixed(1)} kn` : '—';
+        const cog = s.cog != null ? `${Math.round(s.cog)}°` : '—';
+        const shipName = s.name ? escapeHtml(String(s.name).trim()) : '';
+        marker.bindPopup(
+          `<strong>${shipName || t('layer_ships')}</strong><br/>
+           <b>MMSI:</b> ${s.mmsi || '—'}<br/>
+           <b>${t('ships_speed')}:</b> ${sog}<br/>
+           <b>${t('ships_course')}:</b> ${cog}<br/>
+           <small>${s.provider || result.source || 'AIS'}</small><br/>
+           <small class="muted">${escapeHtml(result.coverageNote || t('ships_coverage_note'))}</small>`
+        );
+        this.shipsLayer.addLayer(marker);
+      }
+      if (this._shipsStatus) {
+        this._shipsStatus.classList.remove('hidden');
+        const n = result.count ?? result.ships?.length ?? 0;
+        const ais = result.aisstream;
+        if (n === 0 && result.needsKey) {
+          this._shipsStatus.innerHTML = `${escapeHtml(t('ships_none_br'))} · <a href="#${ROUTES.settings}" class="ships-key-link">${escapeHtml(t('ships_get_key'))}</a>`;
+        } else if (n === 0 && ais?.enabled && !ais.connected && !ais.error) {
+          this._shipsStatus.textContent = `${t('ships_ais_connecting')} · ${t('ships_wait_stream')}`;
+          this._shipsFastPollUntil = Date.now() + 30000;
+        } else if (n === 0 && ais?.enabled && ais.connected) {
+          this._shipsStatus.textContent = `${t('ships_none_coast')} · AISStream ✓ (${ais.cacheTotal || 0} no cache)`;
+          this._shipsFastPollUntil = Date.now() + 20000;
+        } else {
+          let extra = '';
+          if (ais?.enabled) {
+            if (ais.connected) {
+              extra = ' · AISStream ✓';
+            } else if (ais.error) {
+              extra = ` · AISStream: ${ais.error}`;
+            } else {
+              extra = ` · ${t('ships_ais_connecting')}`;
+            }
+          } else {
+            extra = ` · ${t('ships_no_key_hint')}`;
+          }
+          this._shipsStatus.textContent =
+            n === 0
+              ? `${t('ships_none')}${extra}`
+              : `${t('ships_count')}: ${n} · ${result.source || 'AIS'}${extra}`;
+        }
+      }
+    } catch (err) {
+      if (err?.name === 'AbortError') return;
+      console.warn('[MapWidget] ships', err);
+      const msg =
+        err?.code === 'ships_proxy_missing' || String(err?.message || '').includes('Failed')
+          ? t('ships_error_proxy')
+          : t('ships_error');
+      if (this._shipsStatus) {
+        this._shipsStatus.classList.remove('hidden');
+        this._shipsStatus.textContent = msg;
+      }
+      if (!opts.silent) {
+        toastError(msg);
+      }
+    }
+  }
+
+  _setupIss(controls) {
+    this.issLayer = L.layerGroup();
+    this.layers.iss = this.issLayer;
+    this._issLastPos = null;
+
+    this._addLayerToggle(
+      controls,
+      'iss',
+      t('layer_iss'),
+      false,
+      async (on) => {
+        if (!this.map) return;
+        if (on) {
+          this._issEnabled = true;
+          this.issLayer.addTo(this.map);
+          // Ao ligar: busca e centra o mapa na ISS (ela quase nunca está no Brasil)
+          await this._loadIss({ fly: true });
+          this._startIssLive();
+        } else {
+          this._issEnabled = false;
+          this._stopIssLive();
+          this.map.removeLayer(this.issLayer);
+          this.issLayer.clearLayers();
+          this._issMarker = null;
+          this._issLastPos = null;
+          this._issStatus?.classList.add('hidden');
+        }
+      },
+      t('layer_iss_hint')
+    );
+  }
+
+  _startIssLive() {
+    this._stopIssLive();
+    this._issTimer = setInterval(() => {
+      if (this._issEnabled) {
+        this._loadIss({ silent: true });
+      }
+    }, 12000);
+  }
+
+  _stopIssLive() {
+    if (this._issTimer) {
+      clearInterval(this._issTimer);
+      this._issTimer = null;
+    }
+  }
+
+  /**
+   * Centraliza o mapa na última posição conhecida da ISS.
+   * @param {[number, number]|null} [latlng]
+   */
+  _flyToIss(latlng) {
+    if (!this.map) return;
+    const ll = latlng || this._issLastPos;
+    if (!ll || ll[0] == null || ll[1] == null) return;
+    const z = Math.max(this.map.getZoom() || 3, 3);
+    // zoom moderado para achar o ícone sem “afundar” no mar
+    const targetZoom = Math.min(Math.max(z, 3), 5);
+    try {
+      this.map.flyTo(ll, targetZoom, { duration: 1.1 });
+    } catch {
+      this.map.setView(ll, targetZoom);
+    }
+    if (this._issMarker) {
+      setTimeout(() => {
+        try {
+          this._issMarker.openPopup();
+        } catch {
+          /* ignore */
+        }
+      }, 900);
+    }
+  }
+
+  /**
+   * @param {{ silent?: boolean, fly?: boolean }} [opts]
+   */
+  async _loadIss(opts = {}) {
+    if (!this.map || !this.issLayer || !this._issEnabled) {
+      return;
+    }
+    if (this._issAbort) {
+      this._issAbort.abort();
+    }
+    this._issAbort = new AbortController();
+    if (this._issStatus && !opts.silent) {
+      this._issStatus.classList.remove('hidden');
+      this._issStatus.textContent = t('iss_loading');
+    }
+    try {
+      const pos = await fetchIssPosition(this._issAbort.signal);
+      if (pos.latitude == null || pos.longitude == null) {
+        throw new Error('iss_no_pos');
+      }
+      const latlng = [Number(pos.latitude), Number(pos.longitude)];
+      this._issLastPos = latlng;
+      const popup = `<strong>🛰 ${pos.name || 'ISS'}</strong><br/>
+        <b>Lat/Lon:</b> ${latlng[0].toFixed(2)}°, ${latlng[1].toFixed(2)}°<br/>
+        ${pos.altitudeKm != null ? `<b>${t('iss_altitude')}:</b> ${Math.round(pos.altitudeKm)} km<br/>` : ''}
+        ${pos.velocityKmh != null ? `<b>${t('iss_velocity')}:</b> ${Math.round(pos.velocityKmh)} km/h<br/>` : ''}
+        <small>${pos.source || 'ISS API'}</small><br/>
+        <small class="muted">${t('iss_orbits_note')}</small>`;
+      if (this._issMarker) {
+        this._issMarker.setLatLng(latlng);
+        this._issMarker.setPopupContent(popup);
+      } else {
+        this._issMarker = L.marker(latlng, {
+          icon: issIcon(),
+          zIndexOffset: 900,
+          title: 'ISS',
+        });
+        this._issMarker.bindPopup(popup);
+        this.issLayer.addLayer(this._issMarker);
+      }
+
+      // Centra na ISS se pediu, ou se está fora da área visível
+      let shouldFly = !!opts.fly;
+      if (!shouldFly && !opts.silent) {
+        try {
+          if (!this.map.getBounds().pad(0.15).contains(latlng)) {
+            shouldFly = true;
+          }
+        } catch {
+          shouldFly = true;
+        }
+      }
+      if (shouldFly) {
+        this._flyToIss(latlng);
+        if (!opts.silent) {
+          toast(t('iss_found_toast'), { type: 'info' });
+        }
+      }
+
+      if (this._issStatus) {
+        this._issStatus.classList.remove('hidden');
+        this._issStatus.innerHTML = '';
+        const label = el('span', {
+          text: `${t('layer_iss')}: ${latlng[0].toFixed(2)}°, ${latlng[1].toFixed(2)}°`,
+        });
+        const goBtn = el('button', {
+          type: 'button',
+          className: 'btn btn-sm map-iss-goto',
+          text: t('iss_goto'),
+          title: t('iss_goto_hint'),
+          onClick: (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            this._flyToIss(this._issLastPos);
+          },
+        });
+        this._issStatus.append(label, goBtn);
+      }
+    } catch (err) {
+      if (err?.name === 'AbortError') return;
+      console.warn('[MapWidget] ISS', err);
+      if (this._issStatus) {
+        this._issStatus.classList.remove('hidden');
+        this._issStatus.textContent = t('iss_error');
+      }
+      if (!opts.silent) {
+        toastError(t('iss_error'));
+      }
+    }
+  }
+
+  _setupEarthquakes(controls) {
+    this.earthquakesLayer = L.layerGroup();
+    this.layers.earthquakes = this.earthquakesLayer;
+    this._addLayerToggle(
+      controls,
+      'earthquakes',
+      t('layer_earthquakes'),
+      false,
+      async (on) => {
+        if (!this.map) return;
+        if (on) {
+          this._eqEnabled = true;
+          this.earthquakesLayer.addTo(this.map);
+          await this._loadEarthquakes();
+        } else {
+          this._eqEnabled = false;
+          this.map.removeLayer(this.earthquakesLayer);
+          this.earthquakesLayer.clearLayers();
+          this._eqStatus?.classList.add('hidden');
+        }
+      },
+      t('layer_earthquakes_hint')
+    );
+  }
+
+  /**
+   * @param {{ silent?: boolean }} [opts]
+   */
+  async _loadEarthquakes(opts = {}) {
+    if (!this.map || !this.earthquakesLayer || !this._eqEnabled) return;
+    if (this._eqAbort) this._eqAbort.abort();
+    this._eqAbort = new AbortController();
+    if (this._eqStatus && !opts.silent) {
+      this._eqStatus.classList.remove('hidden');
+      this._eqStatus.textContent = t('eq_loading');
+    }
+    let box;
+    try {
+      box = getMapBBox(this.map, 0.05);
+    } catch {
+      const c = this.map.getCenter();
+      box = { west: c.lng - 8, south: c.lat - 6, east: c.lng + 8, north: c.lat + 6 };
+    }
+    try {
+      const result = await fetchEarthquakes({
+        ...box,
+        minmagnitude: 2.5,
+        period: 'week',
+        signal: this._eqAbort.signal,
+      });
+      this.earthquakesLayer.clearLayers();
+      for (const e of result.events) {
+        if (e.latitude == null || e.longitude == null) continue;
+        const mag = e.mag != null ? Number(e.mag) : 0;
+        const marker = L.marker([e.latitude, e.longitude], {
+          icon: quakeIcon(mag),
+          title: e.place || `M${mag}`,
+          zIndexOffset: 300 + Math.round(mag * 10),
+        });
+        const when = e.time ? new Date(e.time).toLocaleString() : '—';
+        const depth = e.depthKm != null ? `${Number(e.depthKm).toFixed(1)} km` : '—';
+        const link = e.url
+          ? `<br/><a href="${escapeHtml(e.url)}" target="_blank" rel="noopener">USGS</a>`
+          : '';
+        marker.bindPopup(
+          `<strong>🌍 M${mag.toFixed(1)}</strong><br/>
+           ${escapeHtml(e.place || t('layer_earthquakes'))}<br/>
+           <b>${t('eq_depth')}:</b> ${depth}<br/>
+           <b>${t('eq_time')}:</b> ${escapeHtml(when)}<br/>
+           <small>${result.source || 'USGS'}</small>${link}`
+        );
+        this.earthquakesLayer.addLayer(marker);
+      }
+      if (this._eqStatus) {
+        this._eqStatus.classList.remove('hidden');
+        const n = result.count ?? result.events?.length ?? 0;
+        this._eqStatus.textContent =
+          n === 0
+            ? t('eq_none')
+            : `${t('eq_count')}: ${n} · USGS (${result.period || 'week'})`;
+      }
+    } catch (err) {
+      if (err?.name === 'AbortError') return;
+      console.warn('[MapWidget] earthquakes', err);
+      const msg =
+        err?.code === 'eq_proxy_missing' ? t('eq_error_proxy') : t('eq_error');
+      if (this._eqStatus) {
+        this._eqStatus.classList.remove('hidden');
+        this._eqStatus.textContent = msg;
+      }
+      if (!opts.silent) toastError(msg);
+    }
+  }
+
+  _setupEonet(controls) {
+    this.eonetLayer = L.layerGroup();
+    this.layers.eonet = this.eonetLayer;
+    this._addLayerToggle(
+      controls,
+      'eonet',
+      t('layer_eonet'),
+      false,
+      async (on) => {
+        if (!this.map) return;
+        if (on) {
+          this._eonetEnabled = true;
+          this.eonetLayer.addTo(this.map);
+          await this._loadEonet();
+        } else {
+          this._eonetEnabled = false;
+          this.map.removeLayer(this.eonetLayer);
+          this.eonetLayer.clearLayers();
+          this._eonetStatus?.classList.add('hidden');
+        }
+      },
+      t('layer_eonet_hint')
+    );
+  }
+
+  /**
+   * @param {{ silent?: boolean }} [opts]
+   */
+  async _loadEonet(opts = {}) {
+    if (!this.map || !this.eonetLayer || !this._eonetEnabled) return;
+    if (this._eonetAbort) this._eonetAbort.abort();
+    this._eonetAbort = new AbortController();
+    if (this._eonetStatus && !opts.silent) {
+      this._eonetStatus.classList.remove('hidden');
+      this._eonetStatus.textContent = t('eonet_loading');
+    }
+    let box;
+    try {
+      box = getMapBBox(this.map, 0.05);
+    } catch {
+      const c = this.map.getCenter();
+      box = { west: c.lng - 10, south: c.lat - 8, east: c.lng + 10, north: c.lat + 8 };
+    }
+    try {
+      const result = await fetchEonetEvents({
+        ...box,
+        days: 30,
+        signal: this._eonetAbort.signal,
+      });
+      this.eonetLayer.clearLayers();
+      for (const e of result.events) {
+        if (e.latitude == null || e.longitude == null) continue;
+        const cats = Array.isArray(e.categories) ? e.categories : [];
+        const cat = cats[0] || '';
+        const marker = L.marker([e.latitude, e.longitude], {
+          icon: eonetIcon(cat),
+          title: e.title || cat || 'EONET',
+          zIndexOffset: 280,
+        });
+        const link = e.link
+          ? `<br/><a href="${escapeHtml(e.link)}" target="_blank" rel="noopener">EONET</a>`
+          : '';
+        marker.bindPopup(
+          `<strong>${escapeHtml(e.title || t('layer_eonet'))}</strong><br/>
+           ${cats.length ? `<b>${t('eonet_category')}:</b> ${escapeHtml(cats.join(', '))}<br/>` : ''}
+           ${e.date ? `<b>${t('eq_time')}:</b> ${escapeHtml(String(e.date))}<br/>` : ''}
+           <small>${result.source || 'NASA EONET'}</small>${link}`
+        );
+        this.eonetLayer.addLayer(marker);
+      }
+      if (this._eonetStatus) {
+        this._eonetStatus.classList.remove('hidden');
+        const n = result.count ?? result.events?.length ?? 0;
+        this._eonetStatus.textContent =
+          n === 0 ? t('eonet_none') : `${t('eonet_count')}: ${n} · NASA EONET`;
+      }
+    } catch (err) {
+      if (err?.name === 'AbortError') return;
+      console.warn('[MapWidget] eonet', err);
+      const msg =
+        err?.code === 'eonet_proxy_missing' ? t('eonet_error_proxy') : t('eonet_error');
+      if (this._eonetStatus) {
+        this._eonetStatus.classList.remove('hidden');
+        this._eonetStatus.textContent = msg;
+      }
+      if (!opts.silent) toastError(msg);
     }
   }
 
@@ -1677,25 +2414,14 @@ export class MapWidget extends Widget {
     this._deterAbort = new AbortController();
     this.deterLayer.clearLayers();
 
-    const loc = this.data.location;
-    const lat = loc?.latitude ?? this.map.getCenter().lat;
-    const lon = loc?.longitude ?? this.map.getCenter().lng;
-    let box = bboxAroundPlace(lat, lon, 2.5);
+    let box;
     try {
-      const b = this.map.getBounds();
-      if (b) {
-        box = {
-          west: b.getWest(),
-          south: b.getSouth(),
-          east: b.getEast(),
-          north: b.getNorth(),
-          lat,
-          lon,
-        };
-      }
+      box = getMapBBox(this.map, 0.02);
     } catch {
-      /* ignore */
+      box = { west: -75, south: -35, east: -30, north: 6 };
     }
+    box.lat = (box.south + box.north) / 2;
+    box.lon = (box.west + box.east) / 2;
 
     try {
       const data = await fetchDeforestationAlerts({
@@ -1784,15 +2510,28 @@ export class MapWidget extends Widget {
    * @param {{ force?: boolean }} [opts]
    */
   async _loadGrid(opts = {}) {
-    const loc = this.data.location;
-    if (!loc) {
+    if (!this.map) {
       return;
     }
-    const key = `mapgrid:v4:${loc.latitude.toFixed(2)},${loc.longitude.toFixed(2)}`;
+    let box;
+    try {
+      box = getMapBBox(this.map, 0.04);
+    } catch {
+      const loc = this.data.location;
+      if (!loc) return;
+      box = {
+        west: loc.longitude - 5,
+        south: loc.latitude - 5,
+        east: loc.longitude + 5,
+        north: loc.latitude + 5,
+      };
+    }
+    const key = `mapgrid:v5:${bboxCacheKey(box, 1)}`;
     let points = opts.force ? null : cacheGet(key);
     if (!points) {
       try {
-        points = await fetchMapGrid(loc.latitude, loc.longitude);
+        const sample = sampleGridInBBox(box, { maxPoints: 81 });
+        points = await fetchMapGrid(sample);
         cacheSet(key, points, CACHE_TTL.mapGrid);
       } catch (err) {
         console.warn('[MapWidget] grid', err);
@@ -2093,6 +2832,83 @@ function locationPinIcon(title = '') {
     iconSize: [28, 40],
     iconAnchor: [14, 38],
     popupAnchor: [0, -34],
+  });
+}
+
+/**
+ * Ícone de embarcação (AIS).
+ * @param {number} headingDeg
+ * @param {number|null} [sogKn]
+ */
+function boatIcon(headingDeg, sogKn) {
+  const rot = Number.isFinite(headingDeg) ? headingDeg : 0;
+  const moving = sogKn != null && sogKn > 0.5;
+  return L.divIcon({
+    className: 'ship-marker',
+    html: `<div class="ship-wrap ${moving ? 'is-moving' : 'is-still'}">
+      <div class="ship-rot" style="transform:rotate(${rot}deg)">🚢</div>
+    </div>`,
+    iconSize: [28, 28],
+    iconAnchor: [14, 14],
+    popupAnchor: [0, -12],
+  });
+}
+
+function issIcon() {
+  return L.divIcon({
+    className: 'iss-marker',
+    html: `<div class="iss-wrap" title="ISS">
+      <span class="iss-ring"></span>
+      <span class="iss-emoji">🛰</span>
+      <span class="iss-label">ISS</span>
+    </div>`,
+    iconSize: [48, 52],
+    iconAnchor: [24, 26],
+    popupAnchor: [0, -22],
+  });
+}
+
+/**
+ * @param {number} mag
+ */
+function quakeIcon(mag) {
+  const m = Number.isFinite(mag) ? mag : 0;
+  const size = Math.max(18, Math.min(40, 14 + m * 4));
+  let tone = 'eq-low';
+  if (m >= 6) tone = 'eq-high';
+  else if (m >= 4.5) tone = 'eq-mid';
+  return L.divIcon({
+    className: 'eq-marker',
+    html: `<div class="eq-wrap ${tone}" style="width:${size}px;height:${size}px" title="M${m.toFixed(1)}">
+      <span class="eq-mag">${m.toFixed(1)}</span>
+    </div>`,
+    iconSize: [size, size],
+    iconAnchor: [size / 2, size / 2],
+    popupAnchor: [0, -size / 2],
+  });
+}
+
+/**
+ * @param {string} category
+ */
+function eonetIcon(category) {
+  const c = (category || '').toLowerCase();
+  let emoji = '⚠';
+  if (c.includes('wildfire') || c.includes('fire')) emoji = '🔥';
+  else if (c.includes('volcano')) emoji = '🌋';
+  else if (c.includes('storm') || c.includes('severe')) emoji = '🌀';
+  else if (c.includes('flood')) emoji = '🌊';
+  else if (c.includes('ice') || c.includes('snow')) emoji = '🧊';
+  else if (c.includes('dust') || c.includes('haze')) emoji = '🌫';
+  else if (c.includes('quake') || c.includes('earth')) emoji = '🌍';
+  else if (c.includes('landslide')) emoji = '⛰';
+  else if (c.includes('water') || c.includes('color')) emoji = '💧';
+  return L.divIcon({
+    className: 'eonet-marker',
+    html: `<div class="eonet-wrap" title="${emoji}">${emoji}</div>`,
+    iconSize: [28, 28],
+    iconAnchor: [14, 14],
+    popupAnchor: [0, -12],
   });
 }
 

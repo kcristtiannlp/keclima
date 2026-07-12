@@ -77,6 +77,7 @@ export const EventBus = new EventBusClass();
 export const Events = {
   LOCATION_CHANGED: 'location:changed',
   WEATHER_UPDATED: 'weather:updated',
+  OFFICIAL_ALERTS_UPDATED: 'alerts:official',
   AIR_QUALITY_UPDATED: 'airquality:updated',
   COMPARE_UPDATED: 'compare:updated',
   SETTINGS_CHANGED: 'settings:changed',

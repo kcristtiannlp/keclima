@@ -34,38 +34,41 @@ import { fetchRetry } from '../../utils/fetchRetry.js';
  * @param {AbortSignal} [opts.signal]
  * @returns {Promise<{ time: number|null, count: number, flights: FlightState[], source: string }>}
  */
-export async function fetchLiveFlights(opts) {
-  const { west, south, east, north, includeGround = false, signal } = opts;
-  const cacheKey = `flights:${west.toFixed(2)},${south.toFixed(2)},${east.toFixed(2)},${north.toFixed(2)}:${includeGround ? 'g' : 'a'}`;
-  const cached = cacheGet(cacheKey);
-  if (cached) {
-    return cached;
-  }
-
+/**
+ * @param {Object} box
+ * @param {boolean} includeGround
+ * @param {boolean} global
+ * @param {AbortSignal} [signal]
+ */
+async function requestFlights(box, includeGround, global, signal) {
   const params = new URLSearchParams({
-    west: String(west),
-    south: String(south),
-    east: String(east),
-    north: String(north),
+    west: String(box.west),
+    south: String(box.south),
+    east: String(box.east),
+    north: String(box.north),
   });
   if (includeGround) {
     params.set('ground', '1');
   }
+  if (global) {
+    params.set('global', '1');
+  }
 
   const res = await fetchRetry(`/api/flights/live?${params}`, {
     signal,
-    retries: 1,
-    timeoutMs: 20000,
+    retries: global ? 0 : 1,
+    timeoutMs: global ? 45000 : 28000,
     headers: { Accept: 'application/json' },
   });
 
+  let body = null;
+  try {
+    body = await res.json();
+  } catch {
+    /* ignore */
+  }
+
   if (!res.ok) {
-    let body = null;
-    try {
-      body = await res.json();
-    } catch {
-      /* ignore */
-    }
     const code =
       res.status === 404
         ? 'flights_proxy_missing'
@@ -76,22 +79,95 @@ export async function fetchLiveFlights(opts) {
     err.code = code;
     throw err;
   }
-
-  const data = await res.json();
-  if (data.error) {
-    const err = new Error(data.error);
-    err.code = data.error;
+  if (body?.error) {
+    const err = new Error(body.error);
+    err.code = body.error;
     throw err;
   }
+  return body;
+}
 
-  const payload = {
-    time: data.time ?? null,
-    count: data.count ?? (data.flights || []).length,
-    flights: data.flights || [],
-    source: data.source || 'OpenSky Network',
-  };
-  cacheSet(cacheKey, payload, CACHE_TTL.flights || 10 * 1000);
-  return payload;
+export async function fetchLiveFlights(opts) {
+  let { west, south, east, north, includeGround = false, signal } = opts;
+  // normaliza
+  if (west > east) {
+    const t = west;
+    west = east;
+    east = t;
+  }
+  if (south > north) {
+    const t = south;
+    south = north;
+    north = t;
+  }
+  // includeGround default true (mais aviões; solo com estilo diferente no mapa)
+  if (opts.includeGround === undefined) {
+    includeGround = true;
+  }
+  const latSpan = Math.abs(north - south);
+  const lonSpan = Math.abs(east - west);
+  // Preferir bbox da OpenSky (completo na área). Global só em zoom planeta.
+  let global = latSpan >= 85 || lonSpan >= 120;
+  const cacheKey = `flights:v4:${west.toFixed(1)},${south.toFixed(1)},${east.toFixed(1)},${north.toFixed(1)}:${includeGround ? 'g' : 'a'}:${global ? 'G' : 'b'}`;
+  const cached = cacheGet(cacheKey);
+  if (cached) {
+    return cached;
+  }
+
+  const box = { west, south, east, north };
+
+  try {
+    const data = await requestFlights(box, includeGround, global, signal);
+    const payload = {
+      time: data.time ?? null,
+      count: data.count ?? (data.flights || []).length,
+      flights: data.flights || [],
+      source: data.source || 'OpenSky Network',
+      scope: data.scope || (global ? 'global' : 'bbox'),
+      truncated: !!data.truncated,
+    };
+    cacheSet(cacheKey, payload, CACHE_TTL.flights || 10 * 1000);
+    return payload;
+  } catch (err) {
+    if (err?.code === 'flights_proxy_missing' || err?.code === 'rate_limited') {
+      throw err;
+    }
+    // Fallback: global falhou → bbox no centro ampliado
+    if (global && err?.name !== 'AbortError') {
+      const clat = (south + north) / 2;
+      const clon = (west + east) / 2;
+      const halfLat = Math.min(40, Math.max(15, latSpan / 2));
+      const halfLon = Math.min(40, Math.max(15, lonSpan / 2));
+      const regional = {
+        west: clon - halfLon,
+        south: Math.max(-90, clat - halfLat),
+        east: clon + halfLon,
+        north: Math.min(90, clat + halfLat),
+      };
+      try {
+        const data = await requestFlights(regional, includeGround, false, signal);
+        const payload = {
+          time: data.time ?? null,
+          count: data.count ?? (data.flights || []).length,
+          flights: data.flights || [],
+          source: data.source || 'OpenSky Network',
+          scope: 'bbox_fallback',
+          truncated: !!data.truncated,
+        };
+        cacheSet(cacheKey, payload, CACHE_TTL.flights || 10 * 1000);
+        return payload;
+      } catch (err2) {
+        if (err2?.name === 'AbortError') throw err2;
+        throw err2;
+      }
+    }
+    if (String(err?.message || '').includes('Failed') || err?.message === 'timeout') {
+      const e = new Error(err.message);
+      e.code = err.message === 'timeout' ? 'timeout' : 'flights_proxy_missing';
+      throw e;
+    }
+    throw err;
+  }
 }
 
 /**

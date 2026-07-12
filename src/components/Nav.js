@@ -54,7 +54,11 @@ export function mountNav(container) {
     const primaryRow = el('div', { className: 'nav-primary' });
 
     for (const item of PRIMARY) {
-      primaryRow.append(navButton(item, path === item.path));
+      const active =
+        path === item.path ||
+        (item.path === ROUTES.charts &&
+          (path.startsWith('/graficos/') || path.startsWith('/charts/')));
+      primaryRow.append(navButton(item, active));
     }
 
     // Botão "Mais"

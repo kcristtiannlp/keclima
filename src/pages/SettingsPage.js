@@ -227,6 +227,42 @@ export async function renderSettingsPage(container) {
       )
     );
 
+    // AISStream API key (opcional — navios com cobertura maior)
+    const aisKeyInput = el('input', {
+      type: 'password',
+      className: 'settings-select firms-key-input',
+      autocomplete: 'off',
+      placeholder: t('settings_ais_key_placeholder'),
+      value: s.aisStreamKey || '',
+    });
+    page.append(
+      field(
+        t('settings_ais_key'),
+        el('div', { className: 'firms-settings' }, [
+          aisKeyInput,
+          el('div', { className: 'default-city-row', style: { marginTop: '0.5rem' } }, [
+            el('button', {
+              type: 'button',
+              className: 'btn btn-sm',
+              text: t('save'),
+              onClick: () => {
+                updateSettings({ aisStreamKey: aisKeyInput.value.trim() });
+                toast(t('save'), { type: 'success' });
+              },
+            }),
+            el('a', {
+              className: 'btn btn-sm btn-ghost',
+              href: API.ships?.aisStreamSignup || 'https://aisstream.io/apikeys',
+              target: '_blank',
+              rel: 'noopener noreferrer',
+              text: t('settings_ais_get_key'),
+            }),
+          ]),
+          el('p', { className: 'muted field-hint', text: t('settings_ais_hint') }),
+        ])
+      )
+    );
+
     page.append(el('p', { className: 'version-line muted', text: `KeClima v${APP_VERSION}` }));
   }
 

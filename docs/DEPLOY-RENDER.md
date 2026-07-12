@@ -1,6 +1,6 @@
 # Deploy KeClima no Render (passo a passo)
 
-O KeClima **não é só estático**: precisa de `serve.py` (proxies INMET, FIRMS/INPE, DETER, voos).
+O KeClima **não é só estático**: precisa de `serve.py` (proxies INMET, FIRMS/INPE, DETER, voos, AIS, ISS, USGS, EONET e GOES).
 
 ## 1. Subir o código no GitHub
 
@@ -31,7 +31,7 @@ Abra no navegador:
 
 | URL | Esperado |
 |-----|----------|
-| `https://SEU-APP.onrender.com/api/health` | `{"ok":true,"version":"0.6.0",...}` |
+| `https://SEU-APP.onrender.com/api/health` | `{"ok":true,"version":"0.7.4",...}` |
 | `https://SEU-APP.onrender.com/` | App KeClima |
 | Dashboard → focos / INMET / desmate | Dados BR (podem demorar no cold start free) |
 

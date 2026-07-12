@@ -11,7 +11,7 @@
 /** @typedef {'24h' | '7d' | '30d' | '365d'} ChartRange */
 
 export const APP_NAME = 'KeClima';
-export const APP_VERSION = '0.6.0';
+export const APP_VERSION = '0.7.4';
 
 export const API = {
   openMeteo: {
@@ -39,6 +39,15 @@ export const API = {
     mapKeySignup: 'https://firms.modaps.eosdis.nasa.gov/api/map_key/',
     source: 'VIIRS_SNPP_NRT',
   },
+  ships: {
+    aisStreamSignup: 'https://aisstream.io/apikeys',
+    aisStreamDocs: 'https://aisstream.io/documentation',
+    aisHubSignup: 'https://www.aishub.net/api',
+  },
+  disasters: {
+    usgs: 'https://earthquake.usgs.gov/',
+    eonet: 'https://eonet.gsfc.nasa.gov/',
+  },
 };
 
 /** TTL de cache em milissegundos */
@@ -51,11 +60,23 @@ export const CACHE_TTL = {
   mapGrid: 20 * 60 * 1000,
   fires: 15 * 60 * 1000,
   inmet: 10 * 60 * 1000,
+  /** Avisos oficiais INMET Alert-AS */
+  inmetAlerts: 5 * 60 * 1000,
   deforestation: 30 * 60 * 1000,
   /** OpenSky: dados mudam rápido; cache curto + proxy no serve.py */
   flights: 10 * 1000,
   /** Tipo/rota de aeronave (hexdb/adsbdb) — muda pouco */
   flightMeta: 24 * 60 * 60 * 1000,
+  /** AIS navios (Digitraffic) */
+  ships: 30 * 1000,
+  /** ISS */
+  iss: 8 * 1000,
+  /** USGS terremotos */
+  earthquakes: 90 * 1000,
+  /** NASA EONET */
+  eonet: 180 * 1000,
+  /** GOES IR frames list */
+  satellite: 90 * 1000,
 };
 
 export const DEFAULT_LOCATION = {
@@ -86,6 +107,8 @@ export const DEFAULT_SETTINGS = {
   /** MAP_KEY gratuita da NASA FIRMS (opcional — sem chave usa CSV público 24h) */
   firmsMapKey: '',
   firmsDayRange: 1,
+  /** Chave grátis AISStream (navios) — opcional; sem chave usa Digitraffic (Europa) */
+  aisStreamKey: '',
   /**
    * Painéis visíveis no dashboard (ordem).
    * O usuário pode excluir/incluir — lista completa em WIDGET_CATALOG.

@@ -22,6 +22,7 @@ import { EventBus, Events } from './EventBus.js';
  * @property {Object|null} compareWeather
  * @property {AppLocation|null} compareLocation
  * @property {Object|null} archive
+ * @property {Object|null} officialAlerts  avisos oficiais INMET (Alert-AS)
  * @property {boolean} loading
  * @property {boolean} offline
  * @property {string|null} error
@@ -37,6 +38,7 @@ const state = {
   compareWeather: null,
   compareLocation: null,
   archive: null,
+  officialAlerts: null,
   loading: false,
   offline: typeof navigator !== 'undefined' ? !navigator.onLine : false,
   error: null,
@@ -75,6 +77,9 @@ export function setState(partial) {
   }
   if ('archive' in partial) {
     EventBus.emit(Events.ARCHIVE_UPDATED, state.archive);
+  }
+  if ('officialAlerts' in partial) {
+    EventBus.emit(Events.OFFICIAL_ALERTS_UPDATED, state.officialAlerts);
   }
   if ('loading' in partial) {
     EventBus.emit(Events.LOADING, state.loading);

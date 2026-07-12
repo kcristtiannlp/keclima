@@ -113,6 +113,7 @@ export async function renderDashboardPage(container) {
       compareWeather: state.compareWeather,
       compareLocation: state.compareLocation,
       archive: state.archive,
+      officialAlerts: state.officialAlerts,
     };
   }
 
@@ -225,6 +226,7 @@ export async function renderDashboardPage(container) {
   const unsubs = [
     EventBus.on(Events.WEATHER_UPDATED, sync),
     EventBus.on(Events.AIR_QUALITY_UPDATED, sync),
+    EventBus.on(Events.OFFICIAL_ALERTS_UPDATED, sync),
     EventBus.on(Events.COMPARE_UPDATED, sync),
     EventBus.on(Events.LOADING, sync),
     EventBus.on(Events.SETTINGS_CHANGED, (s) => {
