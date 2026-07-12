@@ -244,7 +244,7 @@ export const MAP_SOURCES = [
   },
   {
     id: 'anatel',
-    group: 'traffic',
+    group: 'territory',
     name: 'ANATEL Mosaico',
     provider: 'ANATEL',
     role: 'Antenas de Celular',

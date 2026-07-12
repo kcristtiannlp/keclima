@@ -405,7 +405,7 @@ export class MapWidget extends Widget {
     this._setupIss(gTraffic);
 
     this._addLayerToggle(gWeather, 'sst', t('layer_sst'), false, null, t('layer_sst_hint'));
-    this._addLayerToggle(gTraffic, 'anatel', t('layer_anatel'), false, null, t('layer_anatel_hint'));
+    this._addLayerToggle(gTerritory, 'anatel', t('layer_anatel'), false, null, t('layer_anatel_hint'));
 
     // Ao mover/zoom: recarrega camadas (debounce — evita abort/rate limit)
     this._dataMoveTimer = null;
