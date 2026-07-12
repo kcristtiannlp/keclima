@@ -3146,3 +3146,38 @@ html[data-theme='dark'] .widget:hover {
   }
 }
 
+/* Collapsible Map Layer Controls */
+.map-layer-controls-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  padding: 0.45rem 0.85rem;
+  background: var(--bg-elevated);
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-sm);
+  margin-bottom: 0.25rem;
+}
+.map-layers-label-text {
+  font-size: 0.85rem;
+  font-weight: 750;
+  color: var(--text);
+  letter-spacing: 0.02em;
+}
+.map-controls-toggle-btn {
+  padding: 0.2rem 0.5rem;
+  font-size: 0.75rem;
+  line-height: 1;
+  min-height: 24px;
+}
+.map-layer-controls.collapsed .map-layer-group {
+  display: none !important;
+}
+.map-layer-controls.collapsed {
+  margin-bottom: 0.4rem;
+}
+.map-controls-toggle-btn.collapsed-state {
+  color: var(--accent);
+  background: var(--accent-soft);
+}

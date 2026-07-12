@@ -238,9 +238,26 @@ export class MapWidget extends Widget {
     }
 
     const mapEl = el('div', { className: 'leaflet-host', id: `map-host-${this.id}` });
-    const controls = el('div', { className: 'map-layer-controls' }, [
-      el('span', { className: 'map-layers-label', text: t('map_layers') }),
+    
+    const toggleBtn = el('button', {
+      type: 'button',
+      className: 'btn btn-sm btn-ghost map-controls-toggle-btn collapsed-state',
+      text: '▲',
+      title: t('map_layers'),
+      onClick: () => {
+        const isCollapsed = controls.classList.toggle('collapsed');
+        toggleBtn.textContent = isCollapsed ? '▲' : '▼';
+        toggleBtn.classList.toggle('collapsed-state', isCollapsed);
+      }
+    });
+
+    const controls = el('div', { className: 'map-layer-controls collapsed' });
+    const controlsHeader = el('div', { className: 'map-layer-controls-header' }, [
+      el('span', { className: 'map-layers-label-text', text: `⚙️ ${t('map_layers')}` }),
+      toggleBtn
     ]);
+    controls.append(controlsHeader);
+
     const gBase = this._addLayerGroup(controls, t('map_group_base'), true);
     const gWeather = this._addLayerGroup(controls, t('map_group_weather'), true);
     const gRisk = this._addLayerGroup(controls, t('map_group_risk'), true);
