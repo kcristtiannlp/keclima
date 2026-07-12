@@ -5,6 +5,7 @@
 
 import { API } from '../../config.js';
 import { fetchRetry } from '../../utils/fetchRetry.js';
+import { getSettings } from '../../storage/settingsStore.js';
 
 const HOURLY_VARS = [
   'temperature_2m',
@@ -42,6 +43,7 @@ const DAILY_VARS = [
  * @param {AbortSignal} [signal]
  */
 export async function fetchForecast(latitude, longitude, signal) {
+  const model = getSettings().weatherModel || 'best_match';
   const params = new URLSearchParams({
     latitude: String(latitude),
     longitude: String(longitude),
@@ -67,6 +69,10 @@ export async function fetchForecast(latitude, longitude, signal) {
     daily: DAILY_VARS,
     wind_speed_unit: 'kmh',
   });
+
+  if (model && model !== 'best_match') {
+    params.set('models', model);
+  }
 
   const res = await fetchRetry(`${API.openMeteo.forecast}?${params}`, {
     signal,

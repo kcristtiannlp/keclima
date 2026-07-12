@@ -99,10 +99,16 @@ export async function createApp(root, options = {}) {
   });
   window.addEventListener('offline', () => setState({ offline: true }));
 
+  let lastModel = getSettings().weatherModel;
   EventBus.on(Events.SETTINGS_CHANGED, () => {
     headerApi.refreshLabels();
     navApi.refreshLabels();
     document.documentElement.classList.toggle('compact-mode', getSettings().compactMode);
+    const curModel = getSettings().weatherModel;
+    if (curModel !== lastModel) {
+      lastModel = curModel;
+      refreshWeather({ force: true }).catch(() => undefined);
+    }
   });
 
   // Onboarding e clima em background (não bloqueiam a UI)

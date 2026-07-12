@@ -178,7 +178,20 @@ export async function renderSettingsPage(container) {
     );
 
     page.append(
-      field(t('settings_data_source'), el('p', { className: 'muted', text: t('open_source') }))
+      field(
+        t('settings_data_source'),
+        select(
+          'weatherModel',
+          s.weatherModel || 'best_match',
+          [
+            { value: 'best_match', label: 'Open-Meteo (Seamless - Padrão)' },
+            { value: 'ecmwf_ifs04', label: 'ECMWF (Europeu / IFS)' },
+            { value: 'gfs_seamless', label: 'GFS (Americano / NOAA)' },
+            { value: 'icon_seamless', label: 'ICON (Alemão / DWD)' },
+          ],
+          (v) => updateSettings({ weatherModel: v })
+        )
+      )
     );
 
     // NASA FIRMS MAP_KEY (opcional)

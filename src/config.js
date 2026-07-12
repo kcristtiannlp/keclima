@@ -64,7 +64,7 @@ export const CACHE_TTL = {
   inmetAlerts: 5 * 60 * 1000,
   deforestation: 30 * 60 * 1000,
   /** OpenSky: dados mudam rápido; cache curto + proxy no serve.py */
-  flights: 10 * 1000,
+  flights: 15 * 1000,
   /** Tipo/rota de aeronave (hexdb/adsbdb) — muda pouco */
   flightMeta: 24 * 60 * 60 * 1000,
   /** AIS navios (Digitraffic) */
@@ -99,6 +99,7 @@ export const DEFAULT_SETTINGS = {
     pressure: /** @type {PressureUnit} */ ('hpa'),
   },
   dataSource: 'open-meteo',
+  weatherModel: 'best_match',
   compactMode: false,
   onboardingDone: false,
   rainNotifications: false,
