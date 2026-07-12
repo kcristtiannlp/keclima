@@ -1425,13 +1425,29 @@ class Handler(SimpleHTTPRequestHandler):
         # (antes: dump global + corte nos 1200 primeiros = quase nenhum voo no BR).
         use_global = force_global or lat_span >= 85.0 or lon_span >= 120.0
 
+        # Alinha bbox a uma grade de 1.0 grau para maximizar cache hits de voos e evitar 429
+        if not use_global:
+            west = float(math.floor(west))
+            south = float(math.floor(south))
+            east = float(math.ceil(east))
+            north = float(math.ceil(north))
+            lat_span = north - south
+            lon_span = east - west
+
         cache_key = (
             f"opensky:global:v2:{int(include_ground)}"
             if use_global
             else f"opensky:v2:{west:.2f},{south:.2f},{east:.2f},{north:.2f}:{int(include_ground)}"
         )
-        cached = cache_get(cache_key, 15.0 if use_global else 10.0)
-        if cached is not None:
+        cached_raw = _CACHE.get(cache_key)
+        is_fresh = False
+        if cached_raw:
+            ts, val = cached_raw
+            if time.time() - ts <= (15.0 if use_global else 10.0):
+                is_fresh = True
+
+        if is_fresh and cached_raw:
+            cached = cached_raw[1]
             if use_global and lat_span < 160 and lon_span < 340:
                 filtered = [
                     f
@@ -1454,6 +1470,45 @@ class Handler(SimpleHTTPRequestHandler):
             self.send_json(cached)
             return
 
+        def get_stale_fallback():
+            if cached_raw and time.time() - cached_raw[0] <= 240.0: # fallback de até 4 minutos
+                stale_cached = cached_raw[1]
+                if use_global and lat_span < 160 and lon_span < 340:
+                    filtered = [
+                        f
+                        for f in stale_cached.get("flights") or []
+                        if south <= f["latitude"] <= north and west <= f["longitude"] <= east
+                    ]
+                    max_n = 2500
+                    return {
+                        **stale_cached,
+                        "flights": filtered[:max_n],
+                        "count": len(filtered[:max_n]),
+                        "bbox": {"west": west, "south": south, "east": east, "north": north},
+                        "scope": "stale_fallback",
+                        "truncated": len(filtered) > max_n or stale_cached.get("truncated", False),
+                    }
+                return {
+                    **stale_cached,
+                    "scope": "stale_fallback",
+                }
+            return None
+
+        # Suporte a credenciais OpenSky via env
+        import os
+        import base64
+        usr = os.environ.get("OPENSKY_USERNAME") or os.environ.get("OPENSKY_USER")
+        pwd = os.environ.get("OPENSKY_PASSWORD") or os.environ.get("OPENSKY_PASS")
+        extra_headers = {
+            "User-Agent": "KeClima/0.6 (weather-pwa; opensky-proxy)",
+            "Referer": "https://opensky-network.org/",
+            "Origin": "https://opensky-network.org",
+        }
+        if usr and pwd:
+            auth_str = f"{usr.strip()}:{pwd.strip()}"
+            auth_b64 = base64.b64encode(auth_str.encode("utf-8")).decode("utf-8")
+            extra_headers["Authorization"] = f"Basic {auth_b64}"
+
         if use_global:
             url = "https://opensky-network.org/api/states/all"
         else:
@@ -1471,17 +1526,21 @@ class Handler(SimpleHTTPRequestHandler):
                 url,
                 timeout=40 if use_global else 25,
                 accept="application/json",
-                extra_headers={
-                    "User-Agent": "KeClima/0.6 (weather-pwa; opensky-proxy)",
-                    "Referer": "https://opensky-network.org/",
-                    "Origin": "https://opensky-network.org",
-                },
+                extra_headers=extra_headers,
             )
         except Exception as exc:  # noqa: BLE001
+            fb = get_stale_fallback()
+            if fb:
+                self.send_json(fb)
+                return
             self.send_json({"error": "proxy_failed", "detail": str(exc)}, 502)
             return
 
         if status == 429:
+            fb = get_stale_fallback()
+            if fb:
+                self.send_json(fb)
+                return
             self.send_json(
                 {
                     "error": "rate_limited",
@@ -1495,6 +1554,10 @@ class Handler(SimpleHTTPRequestHandler):
             return
 
         if status != 200:
+            fb = get_stale_fallback()
+            if fb:
+                self.send_json(fb)
+                return
             self.send_json(
                 {
                     "error": "opensky_http",
@@ -1679,6 +1742,12 @@ class Handler(SimpleHTTPRequestHandler):
             west, east = east, west
         if south > north:
             south, north = north, south
+
+        # Alinha bbox a uma grade de 0.5 grau para maximizar cache hits de navios e evitar bloqueio
+        west = float(math.floor(west * 2) / 2)
+        south = float(math.floor(south * 2) / 2)
+        east = float(math.ceil(east * 2) / 2)
+        north = float(math.ceil(north * 2) / 2)
 
         key = (qs.get("key", [""])[0] or os.environ.get("AISSTREAM_API_KEY") or "").strip()
         outside_europe = not _bbox_overlaps_europe(west, south, east, north)
