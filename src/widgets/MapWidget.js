@@ -404,6 +404,9 @@ export class MapWidget extends Widget {
     this._setupShips(gTraffic);
     this._setupIss(gTraffic);
 
+    this._addLayerToggle(gWeather, 'sst', t('layer_sst'), false, null, t('layer_sst_hint'));
+    this._addLayerToggle(gTraffic, 'anatel', t('layer_anatel'), false, null, t('layer_anatel_hint'));
+
     // Ao mover/zoom: recarrega camadas (debounce — evita abort/rate limit)
     this._dataMoveTimer = null;
     this._dataMoveHandler = () => {
@@ -486,6 +489,21 @@ export class MapWidget extends Widget {
         pane: 'overlayPane',
       }
     );
+    this.layers.sst = L.tileLayer.wms('https://gibs.earthdata.nasa.gov/wms/epsg3857/best/wms.cgi', {
+      layers: 'GHRSST_L4_MUR_Sea_Surface_Temperature',
+      format: 'image/png',
+      transparent: true,
+      opacity: 0.65,
+      attribution: 'Sea Surface Temp &copy; NASA GHRSST'
+    });
+
+    this.layers.anatel = L.tileLayer.wms('https://sistemas.anatel.gov.br/geoportal/server/services/Mosaico/ERB_Licenciadas/MapServer/WMSServer', {
+      layers: '0',
+      format: 'image/png',
+      transparent: true,
+      opacity: 0.85,
+      attribution: 'Antenas &copy; ANATEL Mosaico'
+    });
   }
 
   /**

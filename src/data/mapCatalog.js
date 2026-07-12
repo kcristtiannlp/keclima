@@ -139,6 +139,16 @@ export const MAP_SOURCES = [
     layerKey: 'lightning',
   },
   {
+    id: 'sst',
+    group: 'weather',
+    name: 'NASA GHRSST',
+    provider: 'NASA JPL',
+    role: 'Temperatura do Mar (SST)',
+    note: 'Camada de temperatura da superfície dos oceanos',
+    url: 'https://podaac.jpl.nasa.gov/',
+    layerKey: 'sst',
+  },
+  {
     id: 'aqi',
     group: 'risk',
     name: 'Open-Meteo Air Quality',
@@ -231,6 +241,16 @@ export const MAP_SOURCES = [
     url: 'https://wheretheiss.at/',
     layerKey: 'iss',
     needsProxy: true,
+  },
+  {
+    id: 'anatel',
+    group: 'traffic',
+    name: 'ANATEL Mosaico',
+    provider: 'ANATEL',
+    role: 'Antenas de Celular',
+    note: 'Estações rádio base licenciadas Claro/Vivo/TIM (WMS oficial)',
+    url: 'https://sistemas.anatel.gov.br/geoportal/',
+    layerKey: 'anatel',
   },
   {
     id: 'earthquakes',

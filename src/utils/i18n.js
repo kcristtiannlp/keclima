@@ -440,6 +440,10 @@ const STRINGS = {
     layer_deter_hint: 'Alertas DETER Amazônia + Cerrado (INPE/TerraBrasilis)',
     layer_prodes: 'PRODES (acumulado)',
     layer_prodes_hint: 'Desmate acumulado PRODES (camada WMS — contexto histórico)',
+    layer_sst: 'Temp. do Mar (SST)',
+    layer_sst_hint: 'Temperatura da superfície oceânica (NASA GHRSST)',
+    layer_anatel: 'Antenas de Celular',
+    layer_anatel_hint: 'Localização das antenas de celular Claro/Vivo/TIM no Brasil (ANATEL)',
     source_alerts_name: 'KeClima + órgãos',
     sources_trust_note:
       'Em emergência, priorize INMET, Defesa Civil e canais oficiais — o KeClima não substitui alerta de desastre.',
@@ -925,6 +929,10 @@ const STRINGS = {
     layer_deter_hint: 'DETER Amazon + Cerrado alerts (INPE/TerraBrasilis)',
     layer_prodes: 'PRODES (accumulated)',
     layer_prodes_hint: 'PRODES accumulated deforestation (WMS context layer)',
+    layer_sst: 'Sea Surface Temp',
+    layer_sst_hint: 'Ocean surface temperature overlay (NASA GHRSST)',
+    layer_anatel: 'Cell Towers (BR)',
+    layer_anatel_hint: 'Location of licensed mobile cell towers in Brazil (ANATEL)',
     source_alerts_name: 'KeClima + agencies',
     sources_trust_note:
       'In emergencies, prioritize INMET, Civil Defense and official channels — KeClima is not a disaster alert system.',
@@ -1410,6 +1418,10 @@ const STRINGS = {
     layer_deter_hint: 'Alertas DETER Amazonia + Cerrado (INPE/TerraBrasilis)',
     layer_prodes: 'PRODES (acumulado)',
     layer_prodes_hint: 'Desmate acumulado PRODES (capa WMS — contexto histórico)',
+    layer_sst: 'Temp. del Mar',
+    layer_sst_hint: 'Temperatura de la superficie oceánica (NASA GHRSST)',
+    layer_anatel: 'Antenas de Celular (BR)',
+    layer_anatel_hint: 'Ubicación de antenas de telefonía móvil Claro/Vivo/TIM (ANATEL)',
     source_alerts_name: 'KeClima + organismos',
     sources_trust_note:
       'En emergencia, priorice INMET, Defensa Civil y canales oficiales — KeClima no sustituye alertas de desastre.',
