@@ -34,7 +34,7 @@ except ImportError:  # pragma: no cover
     HAS_WEBSOCKETS = False
 
 ROOT = Path(__file__).resolve().parent
-APP_VERSION = "0.7.4"
+APP_VERSION = "0.7.5"
 
 
 def resolve_port() -> int:

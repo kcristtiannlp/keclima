@@ -11,7 +11,7 @@
 /** @typedef {'24h' | '7d' | '30d' | '365d'} ChartRange */
 
 export const APP_NAME = 'KeClima';
-export const APP_VERSION = '0.7.4';
+export const APP_VERSION = '0.7.5';
 
 export const API = {
   openMeteo: {
