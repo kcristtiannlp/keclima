@@ -130,13 +130,24 @@ export class SatelliteWidget {
     });
     stage.append(this._img);
 
+    const colorBar = el('div', { className: 'sat-colorbar' }, [
+      el('div', { className: 'sat-colorbar-gradient' }),
+      el('div', { className: 'sat-colorbar-labels' }, [
+        el('span', { text: '-80°C (Nuvens Frias / Tempestades)' }),
+        el('span', { text: '-50°C' }),
+        el('span', { text: '-30°C' }),
+        el('span', { text: '0°C' }),
+        el('span', { text: '+40°C (Solo Limpo)' }),
+      ])
+    ]);
+
     const legend = el('div', { className: 'sat-legend' }, [
       el('h3', { className: 'sat-legend-title', text: t('sat_title') }),
       el('p', { className: 'muted', text: t('sat_desc') }),
       el('p', { className: 'muted sat-hint', text: t('sat_hint') }),
     ]);
 
-    this.root.append(toolbar, this._status, this._meta, stage, legend);
+    this.root.append(toolbar, this._status, this._meta, stage, colorBar, legend);
     this.load();
     return this.root;
   }
