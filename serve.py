@@ -1509,6 +1509,122 @@ class Handler(SimpleHTTPRequestHandler):
             auth_b64 = base64.b64encode(auth_str.encode("utf-8")).decode("utf-8")
             extra_headers["Authorization"] = f"Basic {auth_b64}"
 
+        # Integração ADSB.lol (unfiltered & open) para consultas regionais/área
+        adsb_success = False
+        flights_all = []
+
+        if not use_global:
+            lat = (south + north) / 2.0
+            lon = (west + east) / 2.0
+            r_km = haversine_km(lat, lon, north, east)
+            radius_nm = max(15, min(250, int(r_km / 1.852) + 10))
+            adsb_url = f"https://api.adsb.lol/v2/point/{lat:.4f}/{lon:.4f}/{radius_nm}"
+            try:
+                status, body = fetch_url(
+                    adsb_url,
+                    timeout=15,
+                    accept="application/json",
+                    extra_headers={"User-Agent": "KeClima/0.6 (weather-pwa; adsb-proxy)"},
+                )
+                if status == 200 and body:
+                    raw = json.loads(body.decode("utf-8", errors="replace"))
+                    ac_list = raw.get("ac") or []
+                    for ac in ac_list:
+                        item_lat = ac.get("lat")
+                        item_lon = ac.get("lon")
+                        if item_lat is None or item_lon is None:
+                            continue
+                        try:
+                            lat_f = float(item_lat)
+                            lon_f = float(item_lon)
+                        except (TypeError, ValueError):
+                            continue
+
+                        # Filtra pela área de exibição
+                        if not (south <= lat_f <= north and west <= lon_f <= east):
+                            continue
+
+                        # Altitudes: pés para metros
+                        alt_baro = ac.get("alt_baro")
+                        on_ground = alt_baro == "ground"
+
+                        alt_m = None
+                        if alt_baro is not None and not on_ground:
+                            try:
+                                alt_m = float(alt_baro) * 0.3048
+                            except (TypeError, ValueError):
+                                pass
+
+                        alt_geom = ac.get("alt_geom")
+                        alt_geom_m = None
+                        if alt_geom is not None and alt_geom != "ground":
+                            try:
+                                alt_geom_m = float(alt_geom) * 0.3048
+                            except (TypeError, ValueError):
+                                pass
+
+                        # Velocidade: nós para m/s
+                        gs = ac.get("gs")
+                        vel_ms = None
+                        if gs is not None:
+                            try:
+                                vel_ms = float(gs) * 0.514444
+                            except (TypeError, ValueError):
+                                pass
+
+                        # Razão vertical: ft/min para m/s
+                        baro_rate = ac.get("baro_rate")
+                        geom_rate = ac.get("geom_rate")
+                        rate = baro_rate if baro_rate is not None else geom_rate
+                        rate_ms = None
+                        if rate is not None:
+                            try:
+                                rate_ms = float(rate) * 0.00508
+                            except (TypeError, ValueError):
+                                pass
+
+                        callsign = (ac.get("flight") or "").strip() or None
+                        if not callsign and ac.get("r"):
+                            callsign = ac.get("r").strip()
+
+                        flights_all.append(
+                            {
+                                "icao24": ac.get("hex", "").strip().lower(),
+                                "callsign": callsign,
+                                "originCountry": None,
+                                "longitude": lon_f,
+                                "latitude": lat_f,
+                                "altitudeM": alt_m,
+                                "geoAltitudeM": alt_geom_m,
+                                "onGround": on_ground,
+                                "velocityMs": vel_ms,
+                                "trackDeg": float(ac.get("track", 0)) if ac.get("track") is not None else None,
+                                "verticalRateMs": rate_ms,
+                                "squawk": ac.get("squawk"),
+                            }
+                        )
+                    adsb_success = True
+            except Exception:  # noqa: BLE001
+                pass
+
+        if adsb_success:
+            max_n = 2500
+            truncated = len(flights_all) > max_n
+            flights = flights_all[:max_n]
+            payload = {
+                "time": int(time.time()),
+                "count": len(flights),
+                "flights": flights,
+                "source": "ADSB.lol",
+                "bbox": {"west": west, "south": south, "east": east, "north": north},
+                "truncated": truncated,
+                "scope": "bbox",
+            }
+            cache_set(cache_key, payload)
+            self.send_json(payload)
+            return
+
+        # Fallback para OpenSky Network
         if use_global:
             url = "https://opensky-network.org/api/states/all"
         else:
