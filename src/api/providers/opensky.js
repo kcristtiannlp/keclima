@@ -107,7 +107,7 @@ export async function fetchLiveFlights(opts) {
   const latSpan = Math.abs(north - south);
   const lonSpan = Math.abs(east - west);
   // Preferir bbox da OpenSky (completo na área). Global só em zoom planeta.
-  let global = latSpan >= 85 || lonSpan >= 120;
+  let global = latSpan >= 120 || lonSpan >= 160;
   const cacheKey = `flights:v4:${west.toFixed(1)},${south.toFixed(1)},${east.toFixed(1)},${north.toFixed(1)}:${includeGround ? 'g' : 'a'}:${global ? 'G' : 'b'}`;
   const cached = cacheGet(cacheKey);
   if (cached) {

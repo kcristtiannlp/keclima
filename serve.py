@@ -1430,7 +1430,7 @@ class Handler(SimpleHTTPRequestHandler):
         lon_span = max(0.01, east - west)
         # Dump mundial só em zoom muito aberto. Continentes usam bbox da OpenSky
         # (antes: dump global + corte nos 1200 primeiros = quase nenhum voo no BR).
-        use_global = force_global or lat_span >= 85.0 or lon_span >= 120.0
+        use_global = force_global or lat_span >= 120.0 or lon_span >= 160.0
 
         # Alinha bbox a uma grade de 1.0 grau para maximizar cache hits de voos e evitar 429
         if not use_global:

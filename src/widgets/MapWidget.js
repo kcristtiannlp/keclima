@@ -396,7 +396,7 @@ export class MapWidget extends Widget {
       this._dataMoveTimer = setTimeout(() => {
         this._dataMoveTimer = null;
         this._reloadViewportLayers({ silent: true });
-      }, 700);
+      }, 350);
     };
     this.map.on('moveend', this._dataMoveHandler);
 
