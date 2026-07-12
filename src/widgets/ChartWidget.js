@@ -26,6 +26,7 @@ export class ChartWidget extends Widget {
       humidity: () => t('chart_humidity'),
       precipitation: () => t('chart_precip'),
       wind: () => t('chart_wind'),
+      uv: () => t('chart_uv'),
     };
     super({
       id: `chart-${chartType}`,
@@ -158,6 +159,7 @@ export class ChartWidget extends Widget {
       humidity: { label: t('chart_humidity'), color: '#34d399' },
       precipitation: { label: t('chart_precip'), color: '#60a5fa' },
       wind: { label: t('chart_wind'), color: '#fbbf24' },
+      uv: { label: t('chart_uv'), color: '#f97316' },
     };
 
     const labels = [];
@@ -235,6 +237,8 @@ export class ChartWidget extends Widget {
         return weather.hourly.precipitation[i];
       case 'wind':
         return toDisplayWind(weather.hourly.windSpeed[i]);
+      case 'uv':
+        return weather.hourly.uvIndex?.[i] ?? 0;
       default:
         return null;
     }
@@ -250,6 +254,8 @@ export class ChartWidget extends Widget {
         return weather.daily.precipitationSum[i];
       case 'wind':
         return toDisplayWind(weather.daily.windSpeedMax[i]);
+      case 'uv':
+        return weather.daily.uvIndexMax?.[i] ?? 0;
       case 'humidity':
         return null;
       case 'pressure':
@@ -271,6 +277,8 @@ export class ChartWidget extends Widget {
         return daily.precipitationSum?.[i];
       case 'wind':
         return toDisplayWind(daily.windSpeedMax?.[i]);
+      case 'uv':
+        return null;
       default:
         return null;
     }

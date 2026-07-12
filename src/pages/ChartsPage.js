@@ -68,6 +68,7 @@ export async function renderChartsPage(container) {
     'humidity',
     'precipitation',
     'wind',
+    'uv',
   ]);
 
   const state = getState();
