@@ -456,6 +456,10 @@ html[data-theme='dark'] .brand-name {
   box-shadow: var(--ring);
 }
 
+.btn:active {
+  transform: scale(0.97);
+}
+
 .btn-sm {
   padding: 0.35rem 0.8rem;
   font-size: 0.8rem;
@@ -829,6 +833,13 @@ html[data-theme='dark'] .brand-name {
   animation: rise 0.4s cubic-bezier(0.22, 1, 0.36, 1) both;
   position: relative;
   overflow: hidden;
+  transition: transform var(--transition), box-shadow var(--transition), border-color var(--transition);
+}
+
+.widget:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow);
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
 }
 
 /* brilho sutil no canto do card */
