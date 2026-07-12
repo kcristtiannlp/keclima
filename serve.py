@@ -904,6 +904,9 @@ class Handler(SimpleHTTPRequestHandler):
         if parsed.path == "/api/satellite/goes":
             self.handle_satellite_goes(parsed)
             return
+        if parsed.path == "/api/anatel/proxy":
+            self.handle_anatel_proxy(parsed)
+            return
         return super().do_GET()
 
     def handle_inmet_alerts(self, parsed: urllib.parse.ParseResult):
@@ -1450,7 +1453,7 @@ class Handler(SimpleHTTPRequestHandler):
         is_fresh = False
         if cached_raw:
             ts, val = cached_raw
-            if time.time() - ts <= (15.0 if use_global else 10.0):
+            if time.time() - ts <= (60.0 if use_global else 20.0):
                 is_fresh = True
 
         if is_fresh and cached_raw:
@@ -2468,6 +2471,37 @@ class Handler(SimpleHTTPRequestHandler):
         }
         cache_set(cache_key, payload)
         self.send_json(payload)
+
+    def handle_anatel_proxy(self, parsed: urllib.parse.ParseResult):
+        """
+        Proxy WMS para o Geoportal ANATEL (bypassa CORS e Cloudflare bloqueios).
+        """
+        query_string = parsed.query
+        anatel_url = f"https://sistemas.anatel.gov.br/geoportal/server/services/Mosaico/ERB_Licenciadas/MapServer/WMSServer?{query_string}"
+        try:
+            # Baixa o tile da ANATEL usando fetch_url
+            status, raw = fetch_url(
+                anatel_url,
+                timeout=20,
+                accept="image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+                extra_headers={
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                    "Referer": "https://sistemas.anatel.gov.br/geoportal/",
+                }
+            )
+            if status != 200:
+                self.send_response(status)
+                self.end_headers()
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "image/png")
+            self.send_header("Cache-Control", "public, max-age=86400") # Cache de 1 dia
+            self.end_headers()
+            self.wfile.write(raw)
+        except Exception as exc:
+            self.send_response(502)
+            self.end_headers()
+            self.wfile.write(str(exc).encode())
 
     def send_json(self, obj, status: int = 200):
         body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
