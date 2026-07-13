@@ -11,7 +11,7 @@
 /** @typedef {'24h' | '7d' | '30d' | '365d'} ChartRange */
 
 export const APP_NAME = 'KeClima';
-export const APP_VERSION = '0.8.12';
+export const APP_VERSION = '0.8.13';
 
 export const API = {
   openMeteo: {
@@ -22,7 +22,7 @@ export const API = {
   nominatim: {
     search: 'https://nominatim.openstreetmap.org/search',
     reverse: 'https://nominatim.openstreetmap.org/reverse',
-    userAgent: 'KeClima/0.8.12 (weather-pwa; contact: local)',
+    userAgent: 'KeClima/0.8.13 (weather-pwa; contact: local)',
     minIntervalMs: 1100,
   },
   rainViewer: {
@@ -114,7 +114,7 @@ export const DEFAULT_SETTINGS = {
    * Painéis visíveis no dashboard (ordem).
    * O usuário pode excluir/incluir — lista completa em WIDGET_CATALOG.
    */
-  /** Default: previsão em destaque; mapa/INMET e avançados via Personalizar */
+  /** Default: previsão em destaque; mapa/INMET/fontes via Personalizar */
   widgetOrder: [
     'forecastHome',
     'aqi',
@@ -122,7 +122,6 @@ export const DEFAULT_SETTINGS = {
     'humidity',
     'wind',
     'pressure',
-    'sources',
   ],
   /**
    * Tamanho de cada painel no dashboard: s | m | l

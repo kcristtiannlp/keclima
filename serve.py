@@ -34,7 +34,7 @@ except ImportError:  # pragma: no cover
     HAS_WEBSOCKETS = False
 
 ROOT = Path(__file__).resolve().parent
-APP_VERSION = "0.8.12"
+APP_VERSION = "0.8.13"
 
 
 def resolve_port() -> int:
@@ -1236,7 +1236,7 @@ class Handler(SimpleHTTPRequestHandler):
                 timeout=10,
                 accept="application/json",
                 extra_headers={
-                    "User-Agent": "KeClima/0.8.12 (weather-pwa)",
+                    "User-Agent": "KeClima/0.8.13 (weather-pwa)",
                     "Referer": "https://hexdb.io/",
                 },
             )
@@ -1263,7 +1263,7 @@ class Handler(SimpleHTTPRequestHandler):
                 f"https://api.adsbdb.com/v0/aircraft/{hex_id}",
                 timeout=10,
                 accept="application/json",
-                extra_headers={"User-Agent": "KeClima/0.8.12 (weather-pwa)"},
+                extra_headers={"User-Agent": "KeClima/0.8.13 (weather-pwa)"},
             )
             if st == 200:
                 j = json.loads(body.decode("utf-8", errors="replace"))
@@ -1317,7 +1317,7 @@ class Handler(SimpleHTTPRequestHandler):
                 f"https://api.adsbdb.com/v0/callsign/{urllib.parse.quote(cs)}",
                 timeout=12,
                 accept="application/json",
-                extra_headers={"User-Agent": "KeClima/0.8.12 (weather-pwa)"},
+                extra_headers={"User-Agent": "KeClima/0.8.13 (weather-pwa)"},
             )
             if st == 200:
                 j = json.loads(body.decode("utf-8", errors="replace"))
@@ -1364,7 +1364,7 @@ class Handler(SimpleHTTPRequestHandler):
                     timeout=10,
                     accept="application/json",
                     extra_headers={
-                        "User-Agent": "KeClima/0.8.12 (weather-pwa)",
+                        "User-Agent": "KeClima/0.8.13 (weather-pwa)",
                         "Referer": "https://hexdb.io/",
                     },
                 )
@@ -1523,7 +1523,7 @@ class Handler(SimpleHTTPRequestHandler):
         usr = os.environ.get("OPENSKY_USERNAME") or os.environ.get("OPENSKY_USER")
         pwd = os.environ.get("OPENSKY_PASSWORD") or os.environ.get("OPENSKY_PASS")
         extra_headers = {
-            "User-Agent": "KeClima/0.8.12 (weather-pwa; opensky-proxy)",
+            "User-Agent": "KeClima/0.8.13 (weather-pwa; opensky-proxy)",
             "Referer": "https://opensky-network.org/",
             "Origin": "https://opensky-network.org",
         }
@@ -1543,7 +1543,7 @@ class Handler(SimpleHTTPRequestHandler):
                     adsb_url,
                     timeout=15,
                     accept="application/json",
-                    extra_headers={"User-Agent": "KeClima/0.8.12 (weather-pwa; adsb-proxy)"},
+                    extra_headers={"User-Agent": "KeClima/0.8.13 (weather-pwa; adsb-proxy)"},
                 )
                 if st == 200 and bd:
                     raw = json.loads(bd.decode("utf-8", errors="replace"))
@@ -1631,7 +1631,7 @@ class Handler(SimpleHTTPRequestHandler):
                     adsb_url,
                     timeout=15,
                     accept="application/json",
-                    extra_headers={"User-Agent": "KeClima/0.8.12 (weather-pwa; adsb-proxy)"},
+                    extra_headers={"User-Agent": "KeClima/0.8.13 (weather-pwa; adsb-proxy)"},
                 )
                 if status == 200 and body:
                     raw = json.loads(body.decode("utf-8", errors="replace"))
@@ -1904,7 +1904,7 @@ class Handler(SimpleHTTPRequestHandler):
                         timeout=20,
                         accept="application/json",
                         extra_headers={
-                            "User-Agent": "KeClima/0.8.12 (weather-pwa; opensky-proxy)",
+                            "User-Agent": "KeClima/0.8.13 (weather-pwa; opensky-proxy)",
                             "Referer": "https://opensky-network.org/",
                         },
                     )

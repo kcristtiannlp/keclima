@@ -48,7 +48,7 @@ Opcional (Blueprint): `render.yaml` no repositório.
 
 | URL | Esperado |
 |-----|----------|
-| https://keclima.onrender.com/api/health | `{"ok":true,"version":"0.8.12",...}` |
+| https://keclima.onrender.com/api/health | `{"ok":true,"version":"0.8.13",...}` |
 | https://keclima.onrender.com/ | App KeClima |
 | Dashboard → INMET / focos / desmate | Dados BR (podem demorar no cold start) |
 

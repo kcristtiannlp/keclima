@@ -159,6 +159,28 @@ export function getSettings() {
     });
   }
 
+  // Migração: "Fontes de dados" deixa de ser padrão — remove uma vez;
+  // quem quiser volta em Personalizar (também na página Sobre).
+  if (!stored.sourcesDefaultOffMigrated) {
+    if (widgetOrder.includes('sources')) {
+      widgetOrder = widgetOrder.filter((id) => id !== 'sources');
+    }
+    persistSettings({
+      ...DEFAULT_SETTINGS,
+      ...stored,
+      units: {
+        ...DEFAULT_SETTINGS.units,
+        ...(stored.units || {}),
+      },
+      widgetOrder,
+      widgetSizes,
+      forecastHomeMigrated: true,
+      inmetDefaultOffMigrated: true,
+      mapDefaultOffMigrated: true,
+      sourcesDefaultOffMigrated: true,
+    });
+  }
+
   // Migração: se só existir no blob de settings, espelha na chave dedicada
   const dedicated = getItem(STORAGE_KEYS.widgetOrder, null);
   if (!Array.isArray(dedicated) && Array.isArray(widgetOrder)) {
@@ -177,6 +199,7 @@ export function getSettings() {
     forecastHomeMigrated: true,
     inmetDefaultOffMigrated: true,
     mapDefaultOffMigrated: true,
+    sourcesDefaultOffMigrated: true,
   };
 }
 
