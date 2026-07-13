@@ -2,7 +2,7 @@
  * KeClima Service Worker – shell completo + runtime inteligente.
  */
 
-const CACHE_VERSION = 'keclima-v0.8.10';
+const CACHE_VERSION = 'keclima-v0.8.11';
 const SHELL_CACHE = `${CACHE_VERSION}-shell`;
 const RUNTIME_CACHE = `${CACHE_VERSION}-runtime`;
 const API_CACHE = `${CACHE_VERSION}-api`;

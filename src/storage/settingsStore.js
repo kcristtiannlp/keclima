@@ -118,6 +118,26 @@ export function getSettings() {
     });
   }
 
+  // Migração: "Confiança · INMET" deixa de ser padrão — remove uma vez;
+  // quem quiser volta em Personalizar painéis.
+  if (!stored.inmetDefaultOffMigrated) {
+    if (widgetOrder.includes('inmet')) {
+      widgetOrder = widgetOrder.filter((id) => id !== 'inmet');
+    }
+    persistSettings({
+      ...DEFAULT_SETTINGS,
+      ...stored,
+      units: {
+        ...DEFAULT_SETTINGS.units,
+        ...(stored.units || {}),
+      },
+      widgetOrder,
+      widgetSizes,
+      forecastHomeMigrated: true,
+      inmetDefaultOffMigrated: true,
+    });
+  }
+
   // Migração: se só existir no blob de settings, espelha na chave dedicada
   const dedicated = getItem(STORAGE_KEYS.widgetOrder, null);
   if (!Array.isArray(dedicated) && Array.isArray(widgetOrder)) {
@@ -134,6 +154,7 @@ export function getSettings() {
     widgetOrder,
     widgetSizes,
     forecastHomeMigrated: true,
+    inmetDefaultOffMigrated: true,
   };
 }
 

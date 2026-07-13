@@ -2,7 +2,7 @@
 
 PWA de meteorologia e território (Brasil): clima, qualidade do ar, mapa, focos de fogo e desmatamento.
 
-**Versão 0.8.10** · HTML/CSS/JS ES Modules · sem React/Vue/Angular
+**Versão 0.8.11** · HTML/CSS/JS ES Modules · sem React/Vue/Angular
 
 | | |
 |--|--|
