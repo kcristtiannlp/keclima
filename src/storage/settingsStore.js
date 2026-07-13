@@ -138,6 +138,27 @@ export function getSettings() {
     });
   }
 
+  // Migração: mapa deixa de ser padrão no dashboard — remove uma vez;
+  // quem quiser volta em Personalizar (ou usa a página Mapa).
+  if (!stored.mapDefaultOffMigrated) {
+    if (widgetOrder.includes('map')) {
+      widgetOrder = widgetOrder.filter((id) => id !== 'map');
+    }
+    persistSettings({
+      ...DEFAULT_SETTINGS,
+      ...stored,
+      units: {
+        ...DEFAULT_SETTINGS.units,
+        ...(stored.units || {}),
+      },
+      widgetOrder,
+      widgetSizes,
+      forecastHomeMigrated: true,
+      inmetDefaultOffMigrated: true,
+      mapDefaultOffMigrated: true,
+    });
+  }
+
   // Migração: se só existir no blob de settings, espelha na chave dedicada
   const dedicated = getItem(STORAGE_KEYS.widgetOrder, null);
   if (!Array.isArray(dedicated) && Array.isArray(widgetOrder)) {
@@ -155,6 +176,7 @@ export function getSettings() {
     widgetSizes,
     forecastHomeMigrated: true,
     inmetDefaultOffMigrated: true,
+    mapDefaultOffMigrated: true,
   };
 }
 

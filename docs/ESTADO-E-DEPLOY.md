@@ -4,7 +4,7 @@
 
 | Item | Valor |
 |------|--------|
-| Versão | **0.8.11** |
+| Versão | **0.8.12** |
 | Stack | HTML/CSS/JS ES Modules, PWA, sem framework |
 | Local | `python3 serve.py 8080` → http://localhost:8080 |
 | **Produção** | **https://keclima.onrender.com** |
@@ -35,7 +35,7 @@
 - [x] GitHub: https://github.com/kcristtiannlp/keclima
 - [x] Render: https://keclima.onrender.com
 - [x] Health + proxies no ar (validado 2026-07-13)
-  - health `ok` / versão `0.8.11`
+  - health `ok` / versão `0.8.12`
   - INMET nearest (SP) OK
   - focos, ISS, GOES OK
 
