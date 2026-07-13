@@ -1,9 +1,15 @@
 #!/bin/bash
 # KeClima – Teste completo de integração de todas as APIs
-# Uso: bash scripts/full_api_test.sh [porta]
+# Uso:
+#   bash scripts/full_api_test.sh [porta]
+#   bash scripts/full_api_test.sh https://keclima.onrender.com
 set -euo pipefail
-PORT="${1:-8080}"
-BASE="http://localhost:$PORT"
+ARG="${1:-8080}"
+if [[ "$ARG" == http://* || "$ARG" == https://* ]]; then
+  BASE="${ARG%/}"
+else
+  BASE="http://localhost:$ARG"
+fi
 PASS=0
 FAIL=0
 WARN=0

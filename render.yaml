@@ -1,11 +1,12 @@
 # Deploy no Render: New → Blueprint → este repositório
+# Produção: https://keclima.onrender.com
 # https://render.com/docs/blueprint-spec
 services:
   - type: web
     name: keclima
     runtime: python
     plan: free
-    buildCommand: "true"
+    buildCommand: "pip install -r requirements.txt"
     startCommand: python3 serve.py
     healthCheckPath: /api/health
     envVars:

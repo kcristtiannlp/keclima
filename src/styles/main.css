@@ -3054,6 +3054,9 @@ html[data-theme='dark'] .leaflet-bar a:hover {
 .about-hero { text-align: center; margin-bottom: 1rem; }
 .about-logo { font-size: 3rem; display: block; }
 .about-list { line-height: 1.7; color: var(--text-muted); }
+.about-links { margin: 0.5rem 0 1rem; }
+.about-links a { color: var(--accent, #3b82f6); text-decoration: none; }
+.about-links a:hover { text-decoration: underline; }
 .field-hint { font-size: 0.78rem; margin: 0.35rem 0 0; }
 .sources-footer { margin-top: 1.25rem; font-size: 0.8rem; }
 

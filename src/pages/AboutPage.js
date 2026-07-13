@@ -45,6 +45,21 @@ export async function renderAboutPage(container) {
         el('strong', { text: `${t('about_version')}: ` }),
         el('span', { text: APP_VERSION }),
       ]),
+      el('p', { className: 'about-links' }, [
+        el('a', {
+          href: 'https://keclima.onrender.com',
+          target: '_blank',
+          rel: 'noopener noreferrer',
+          text: 'keclima.onrender.com',
+        }),
+        el('span', { className: 'muted', text: ' · ' }),
+        el('a', {
+          href: 'https://github.com/kcristtiannlp/keclima',
+          target: '_blank',
+          rel: 'noopener noreferrer',
+          text: 'GitHub',
+        }),
+      ]),
       el('p', { className: 'muted', text: t('about_license') }),
       el('p', { className: 'muted sources-footer', text: t('sources_footer') })
     );

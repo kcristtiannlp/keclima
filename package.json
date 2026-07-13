@@ -2,6 +2,11 @@
   "name": "keclima",
   "version": "0.8.10",
   "description": "KeClima – Progressive Web App de meteorologia completa",
+  "homepage": "https://keclima.onrender.com",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kcristtiannlp/keclima.git"
+  },
   "type": "module",
   "private": true,
   "scripts": {

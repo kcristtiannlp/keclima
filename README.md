@@ -4,7 +4,15 @@ PWA de meteorologia e território (Brasil): clima, qualidade do ar, mapa, focos 
 
 **Versão 0.8.10** · HTML/CSS/JS ES Modules · sem React/Vue/Angular
 
-## Executar
+| | |
+|--|--|
+| **Site (no ar)** | https://keclima.onrender.com |
+| **Health** | https://keclima.onrender.com/api/health |
+| **Código** | https://github.com/kcristtiannlp/keclima |
+
+> Plano free do Render: após inatividade a 1ª abertura pode levar ~30–60 s.
+
+## Executar local
 
 ```bash
 cd keclima
@@ -12,7 +20,7 @@ python3 serve.py 8080
 # http://localhost:8080
 ```
 
-> Use **`serve.py`** (proxy para FIRMS, INMET, DETER, OpenSky/ADSB.lol, AIS, ISS, USGS, EONET e GOES).
+> Use **`serve.py`** (proxy para FIRMS, INMET, DETER, OpenSky/ADSB.lol, AIS, ISS, USGS, EONET e GOES).  
 > `python3 -m http.server` só serve arquivos estáticos — camadas oficiais falham por CORS.
 
 | Variável | Uso |
@@ -43,14 +51,17 @@ bash scripts/smoke_test.sh
 http://localhost:8080/tests/runner.html
 ```
 
-Health: `http://localhost:8080/api/health`
+Health local: `http://localhost:8080/api/health`
 
 ## Deploy
 
-Ver [`docs/DEPLOY-RENDER.md`](docs/DEPLOY-RENDER.md) e [`docs/ESTADO-E-DEPLOY.md`](docs/ESTADO-E-DEPLOY.md).
+Produção atual: **Render** (Web Service free) → https://keclima.onrender.com
+
+- Guia: [`docs/DEPLOY-RENDER.md`](docs/DEPLOY-RENDER.md)
+- Estado e checklist: [`docs/ESTADO-E-DEPLOY.md`](docs/ESTADO-E-DEPLOY.md)
 
 ```bash
-# Docker
+# Docker (alternativa)
 docker build -t keclima .
 docker run --rm -p 8080:8080 keclima
 ```
