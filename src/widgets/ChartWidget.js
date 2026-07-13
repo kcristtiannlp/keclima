@@ -6,7 +6,12 @@
 import { Widget } from './Widget.js';
 import { el } from '../utils/dom.js';
 import { t } from '../utils/i18n.js';
-import { toDisplayTemp, toDisplayPressure, toDisplayWind } from '../utils/units.js';
+import {
+  toDisplayTemp,
+  toDisplayPressure,
+  toDisplayWind,
+  parseWeatherDate,
+} from '../utils/units.js';
 import { getSettings, updateSettings } from '../storage/settingsStore.js';
 import { loadArchive } from '../services/weatherService.js';
 
@@ -199,7 +204,7 @@ export class ChartWidget extends Widget {
 
       if (daily?.time?.length) {
         for (let i = 0; i < daily.time.length; i++) {
-          const d = new Date(daily.time[i]);
+          const d = parseWeatherDate(daily.time[i]);
           labels.push(
             d.toLocaleDateString(locale, {
               day: '2-digit',
@@ -210,7 +215,7 @@ export class ChartWidget extends Widget {
         }
       } else if (weather.daily?.time?.length) {
         for (let i = 0; i < weather.daily.time.length; i++) {
-          const d = new Date(weather.daily.time[i]);
+          const d = parseWeatherDate(weather.daily.time[i]);
           labels.push(d.toLocaleDateString(locale, { day: '2-digit', month: 'short' }));
           values.push(this._valueDaily(weather, i));
         }

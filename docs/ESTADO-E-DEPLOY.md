@@ -4,7 +4,7 @@
 
 | Item | Valor |
 |------|--------|
-| Versão | **0.7.4** |
+| Versão | **0.8.10** |
 | Stack | HTML/CSS/JS ES Modules, PWA, sem framework |
 | Local | `python3 serve.py 8080` → http://localhost:8080 |
 | Cloud | `$PORT` + `python3 serve.py` |
@@ -14,8 +14,9 @@
 
 - `/api/fires/hotspots` — INPE + FIRMS
 - `/api/inmet/nearest` — estação INMET
+- `/api/inmet/alerts` — avisos oficiais Alert-AS
 - `/api/deforestation/alerts` — DETER
-- `/api/flights/*` — OpenSky + metadados
+- `/api/flights/*` — ADSB.lol + OpenSky (fallback) + metadados
 - `/api/ships/live` — Digitraffic + AISStream opcional
 - `/api/iss/now` — posição da ISS
 - `/api/earthquakes/live` — USGS

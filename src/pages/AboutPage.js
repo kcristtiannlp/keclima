@@ -25,7 +25,7 @@ export async function renderAboutPage(container) {
       ]),
       el('h3', { text: t('about_apis') }),
       el('ul', { className: 'about-list' }, [
-        el('li', { text: '✈️ OpenSky Network — voos ao vivo (proxy)' }),
+        el('li', { text: '✈️ ADSB.lol + OpenSky — voos ao vivo (proxy)' }),
         el('li', { text: '🚢 Digitraffic + AISStream (opcional) — navios AIS' }),
         el('li', { text: '🌦️ Open-Meteo — previsão, grade, qualidade do ar' }),
         el('li', { text: '🇧🇷 INMET — estação observada + avisos oficiais (Alert-AS)' }),

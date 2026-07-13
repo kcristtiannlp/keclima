@@ -832,7 +832,7 @@ html[data-theme='dark'] .brand-name {
   flex-direction: column;
   animation: rise 0.4s cubic-bezier(0.22, 1, 0.36, 1) both;
   position: relative;
-  overflow: hidden;
+  overflow: visible;
   transition: transform var(--transition), box-shadow var(--transition), border-color var(--transition);
 }
 
@@ -2108,20 +2108,36 @@ html[data-theme='dark'] .map-layer-group {
 }
 
 .widget-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  width: 100%;
+  overflow: visible;
+}
+
+.widget-header-actions .widget-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding-right: 0.25rem;
+}
+
+.widget-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  flex: 0 0 auto;
+  margin-left: auto;
+  z-index: 20;
   position: relative;
-  padding-right: 1.75rem;
 }
 
-.widget-header-actions {
-  padding-right: 4.2rem !important;
-}
-
+.widget-move-up,
+.widget-move-down,
 .widget-size-btn,
 .widget-remove {
-  position: absolute;
-  top: 0;
-  width: 28px;
-  height: 28px;
+  position: relative;
+  width: 32px;
+  height: 32px;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--input-bg);
@@ -2133,16 +2149,61 @@ html[data-theme='dark'] .map-layer-group {
   display: grid;
   place-items: center;
   padding: 0;
+  z-index: 20;
+  pointer-events: auto;
+  user-select: none;
+  touch-action: manipulation;
+  flex-shrink: 0;
+}
+
+.widget-move-up:disabled,
+.widget-move-down:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.widget-move-up:not(:disabled):hover,
+.widget-move-down:not(:disabled):hover,
+.widget-size-btn:hover {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
 }
 
 .widget-size-btn {
-  right: 2rem;
   letter-spacing: 0.02em;
 }
 
 .widget-remove {
-  right: 0;
-  font-size: 1.1rem;
+  font-size: 1.25rem;
+  color: color-mix(in srgb, var(--danger, #dc2626) 80%, var(--text-muted));
+  border-color: color-mix(in srgb, var(--danger, #dc2626) 35%, var(--border));
+}
+
+.widget-remove:hover {
+  color: #fff;
+  background: var(--danger, #dc2626);
+  border-color: var(--danger, #dc2626);
+}
+
+.no-panels {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.65rem;
+  padding: 1rem 0.25rem;
+}
+
+.widget.dragging {
+  opacity: 0.72;
+  outline: 2px dashed color-mix(in srgb, var(--accent) 50%, transparent);
+}
+
+/* botões do header não podem ser cortados */
+.widget {
+  overflow: visible;
+}
+.widget .widget-body {
+  overflow: auto;
 }
 
 .widget-size-btn:hover {
@@ -2561,6 +2622,335 @@ html[data-theme='dark'] .leaflet-bar a:hover {
   50% { transform: scale(1.06); }
 }
 
+/* —— Home de previsão (Sprint 1) —— */
+.widget-forecast-home {
+  background:
+    radial-gradient(120% 90% at 8% 0%, color-mix(in srgb, var(--accent) 24%, transparent), transparent 58%),
+    radial-gradient(80% 60% at 100% 20%, color-mix(in srgb, var(--accent-2, var(--accent)) 12%, transparent), transparent 50%),
+    var(--bg-widget);
+}
+
+.fh-place {
+  margin: 0 0 0.35rem;
+  font-size: 0.92rem;
+  font-weight: 600;
+}
+
+/* Alertas embutidos no card de previsão */
+.fh-alerts {
+  margin: 0 0 0.75rem;
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, #f59e0b 45%, var(--border));
+  background: color-mix(in srgb, #f59e0b 14%, var(--input-bg));
+  overflow: hidden;
+}
+
+.fh-alerts.severity-danger {
+  border-color: color-mix(in srgb, #ef4444 50%, var(--border));
+  background: color-mix(in srgb, #ef4444 14%, var(--input-bg));
+}
+
+.fh-alerts.severity-info {
+  border-color: color-mix(in srgb, #38bdf8 45%, var(--border));
+  background: color-mix(in srgb, #38bdf8 12%, var(--input-bg));
+}
+
+.fh-alerts-head {
+  width: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem 0.55rem;
+  padding: 0.55rem 0.7rem;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+}
+
+.fh-alerts-head:hover {
+  background: color-mix(in srgb, #000 4%, transparent);
+}
+
+.fh-alerts-ico {
+  font-size: 1.05rem;
+  line-height: 1;
+}
+
+.fh-alerts-title {
+  flex: 1 1 10rem;
+  font-weight: 700;
+  font-size: 0.92rem;
+  line-height: 1.25;
+}
+
+.fh-alerts-badge {
+  font-size: 0.68rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  padding: 0.15rem 0.4rem;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, #f59e0b 55%, var(--border));
+  color: color-mix(in srgb, #b45309 70%, var(--text));
+}
+
+.fh-alerts.severity-danger .fh-alerts-badge {
+  border-color: color-mix(in srgb, #ef4444 55%, var(--border));
+  color: color-mix(in srgb, #b91c1c 70%, var(--text));
+}
+
+.fh-alerts-toggle {
+  font-size: 0.75rem;
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+.fh-alerts-detail {
+  padding: 0 0.7rem 0.7rem;
+  border-top: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+}
+
+.fh-alerts-section {
+  margin: 0.55rem 0 0.3rem;
+  font-size: 0.72rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+.fh-alert-item {
+  margin: 0.35rem 0;
+  padding: 0.4rem 0.5rem;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg-widget) 70%, transparent);
+  border-left: 3px solid #f59e0b;
+}
+
+.fh-alert-item.severity-danger {
+  border-left-color: #ef4444;
+}
+
+.fh-alert-item strong {
+  display: block;
+  font-size: 0.88rem;
+  margin-bottom: 0.15rem;
+}
+
+.fh-alert-item p {
+  margin: 0.15rem 0 0;
+  font-size: 0.82rem;
+  line-height: 1.35;
+}
+
+.fh-alerts-local {
+  margin: 0.25rem 0 0;
+  padding-left: 1.1rem;
+  font-size: 0.85rem;
+}
+
+.fh-alerts-local li {
+  margin: 0.2rem 0;
+}
+
+.fh-alerts-link {
+  display: inline-block;
+  margin-top: 0.45rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.fh-alerts-link:hover {
+  text-decoration: underline;
+}
+
+.fh-hero {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem 1.25rem;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 0.65rem;
+}
+
+.fh-hero-main {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+}
+
+.fh-icon {
+  font-size: 3rem;
+  line-height: 1;
+  filter: drop-shadow(0 2px 8px rgba(0, 0, 0, 0.15));
+}
+
+.fh-temp {
+  font-size: clamp(2.4rem, 6vw, 3.2rem);
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  line-height: 1;
+}
+
+.fh-condition {
+  margin: 0.2rem 0 0;
+  font-size: 1.05rem;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.fh-hero-chips {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(7.5rem, 1fr));
+  gap: 0.4rem;
+}
+
+.fh-chip {
+  display: flex;
+  flex-direction: column;
+  gap: 0.12rem;
+  padding: 0.4rem 0.55rem;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--input-bg) 92%, transparent);
+  border: 1px solid var(--border);
+  font-size: 0.88rem;
+}
+
+.fh-chip-label {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.fh-chip-rain strong {
+  color: color-mix(in srgb, #38bdf8 70%, var(--text));
+}
+
+.fh-blurb {
+  margin: 0 0 0.9rem;
+  padding: 0.65rem 0.8rem;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--accent) 10%, var(--input-bg));
+  border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--border));
+  font-size: 0.95rem;
+  line-height: 1.45;
+}
+
+.fh-section {
+  margin-top: 0.35rem;
+}
+
+.fh-section-title {
+  margin: 0 0 0.4rem;
+  font-size: 0.82rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+.fh-scroll-hint {
+  margin: 0 0 0.3rem;
+  font-size: 0.75rem;
+}
+
+.fh-scroll {
+  display: flex;
+  gap: 0.4rem;
+  overflow-x: auto;
+  padding: 0.15rem 0.1rem 0.55rem;
+  scroll-snap-type: x proximity;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+}
+
+.fh-hour,
+.fh-day {
+  flex: 0 0 auto;
+  scroll-snap-align: start;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.2rem;
+  min-width: 3.6rem;
+  padding: 0.5rem 0.4rem;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--input-bg) 88%, transparent);
+  font-size: 0.78rem;
+  text-align: center;
+}
+
+.fh-hour.is-now,
+.fh-day.is-today {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+  background: color-mix(in srgb, var(--accent) 14%, var(--input-bg));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 25%, transparent);
+}
+
+.fh-hour.is-wet {
+  background: color-mix(in srgb, #38bdf8 12%, var(--input-bg));
+}
+
+.fh-h-time,
+.fh-d-name {
+  font-weight: 700;
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  white-space: nowrap;
+}
+
+.fh-h-icon,
+.fh-d-icon {
+  font-size: 1.35rem;
+  line-height: 1.2;
+}
+
+.fh-h-temp,
+.fh-d-temps {
+  font-weight: 800;
+  font-size: 0.88rem;
+}
+
+.fh-h-pop,
+.fh-d-pop {
+  color: color-mix(in srgb, #38bdf8 75%, var(--text-muted));
+  font-weight: 700;
+  font-size: 0.72rem;
+}
+
+.fh-h-mm {
+  font-size: 0.65rem;
+  color: var(--text-muted);
+  min-height: 0.85em;
+}
+
+.fh-day {
+  min-width: 5.2rem;
+  padding: 0.55rem 0.5rem;
+}
+
+.fh-d-temps {
+  font-size: 0.78rem;
+  white-space: nowrap;
+}
+
+@media (max-width: 560px) {
+  .fh-hero-chips {
+    width: 100%;
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .fh-icon {
+    font-size: 2.5rem;
+  }
+}
+
 .skeleton {
   background: linear-gradient(90deg,
     color-mix(in srgb, var(--text-muted) 12%, transparent),
@@ -2915,7 +3305,9 @@ html {
 @media (max-width: 720px) {
   .icon-btn,
   .widget-remove,
-  .widget-size-btn {
+  .widget-size-btn,
+  .widget-move-up,
+  .widget-move-down {
     min-width: 40px;
     min-height: 40px;
   }

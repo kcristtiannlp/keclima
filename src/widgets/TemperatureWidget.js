@@ -7,6 +7,7 @@ import { el } from '../utils/dom.js';
 import { t, weatherLabel } from '../utils/i18n.js';
 import { formatTemp } from '../utils/units.js';
 import { getWeatherMeta } from '../utils/weather.js';
+import { findTodayDailyIndex } from '../utils/forecastSummary.js';
 
 export class TemperatureWidget extends Widget {
   constructor(data = {}) {
@@ -45,6 +46,7 @@ export class TemperatureWidget extends Widget {
     const c = weather.current;
     const meta = getWeatherMeta(c.weatherCode);
     const daily = weather.daily;
+    const dayIdx = findTodayDailyIndex(daily?.time || []);
     const elev = weather.elevation;
 
     this.body.append(
@@ -61,16 +63,16 @@ export class TemperatureWidget extends Widget {
             el('span', { className: 'chip-label', text: t('feels_like') }),
             el('strong', { text: formatTemp(c.apparentTemperature, 0) }),
           ]),
-          daily?.temperatureMax?.[0] !== undefined
+          daily?.temperatureMax?.[dayIdx] !== undefined
             ? el('div', { className: 'chip' }, [
                 el('span', { className: 'chip-label', text: t('max_temp') }),
-                el('strong', { text: formatTemp(daily.temperatureMax[0], 0) }),
+                el('strong', { text: formatTemp(daily.temperatureMax[dayIdx], 0) }),
               ])
             : null,
-          daily?.temperatureMin?.[0] !== undefined
+          daily?.temperatureMin?.[dayIdx] !== undefined
             ? el('div', { className: 'chip' }, [
                 el('span', { className: 'chip-label', text: t('min_temp') }),
-                el('strong', { text: formatTemp(daily.temperatureMin[0], 0) }),
+                el('strong', { text: formatTemp(daily.temperatureMin[dayIdx], 0) }),
               ])
             : null,
           elev != null

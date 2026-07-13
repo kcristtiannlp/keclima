@@ -1,5 +1,6 @@
 /**
- * Dashboard com painéis reordenáveis, exclusão/inclusão e tamanho S/M/L.
+ * Dashboard: painéis com tamanho S/M/L, ocultar e reordenar com setas.
+ * (Sem drag-and-drop — falhava na grade CSS.)
  * @module pages/DashboardPage
  */
 
@@ -9,12 +10,14 @@ import { EventBus, Events } from '../core/EventBus.js';
 import {
   getSettings,
   updateSettings,
-  hideWidget,
   setVisibleWidgets,
   getWidgetSize,
   cycleWidgetSize,
+  verifyWidgetOrderPersisted,
 } from '../storage/settingsStore.js';
 import { DEFAULT_SETTINGS, WIDGET_CATALOG, WIDGET_SIZES } from '../config.js';
+import { toastError, toastSuccess } from '../services/toastService.js';
+import { ForecastHomeWidget } from '../widgets/ForecastHomeWidget.js';
 import { TemperatureWidget } from '../widgets/TemperatureWidget.js';
 import { PressureWidget } from '../widgets/PressureWidget.js';
 import { HumidityWidget } from '../widgets/HumidityWidget.js';
@@ -35,6 +38,7 @@ import { t } from '../utils/i18n.js';
 import { loadCompareWeather } from '../services/weatherService.js';
 
 const FACTORY = {
+  forecastHome: () => new ForecastHomeWidget(),
   temperature: () => new TemperatureWidget(),
   inmet: () => new InmetWidget(),
   conditions: () => new ConditionsWidget(),
@@ -58,6 +62,7 @@ const FACTORY = {
 };
 
 const LABEL_KEYS = {
+  forecastHome: 'forecast_home_title',
   temperature: 'temperature',
   inmet: 'inmet_title',
   conditions: 'condition',
@@ -88,17 +93,31 @@ export async function renderDashboardPage(container) {
 
   /** @type {import('../widgets/Widget.js').Widget[]} */
   let widgets = [];
+  /** Ordem visível (fonte de verdade na sessão) */
+  let visibleOrder = [...(getSettings().widgetOrder || [])];
 
   const customizeBtn = el('button', {
     type: 'button',
     className: 'btn btn-sm',
     text: t('customize_panels'),
-    onClick: () => openCustomize(customizeHost, () => rebuild()),
+    onClick: () =>
+      openCustomize(customizeHost, (newOrder) => {
+        visibleOrder = Array.isArray(newOrder)
+          ? [...newOrder]
+          : [...(getSettings().widgetOrder || [])];
+        rebuild();
+      }),
   });
   toolbar.append(customizeBtn);
 
   function teardownWidgets() {
-    widgets.forEach((w) => w.destroy());
+    for (const w of widgets) {
+      try {
+        w.destroy();
+      } catch {
+        /* ignore */
+      }
+    }
     widgets = [];
     grid.innerHTML = '';
   }
@@ -125,87 +144,178 @@ export async function renderDashboardPage(container) {
     return size;
   }
 
-  function mountWidgets() {
-    teardownWidgets();
-    const order = getSettings().widgetOrder || [];
+  function persistOrder() {
+    updateSettings({ widgetOrder: [...visibleOrder] });
+  }
 
-    if (!order.length) {
-      grid.append(el('p', { className: 'muted', text: t('no_panels') }));
+  /** Atualiza estado disabled das setas de todos os cards */
+  function refreshMoveButtons() {
+    const cards = [...grid.querySelectorAll('[data-widget-id]')];
+    cards.forEach((card, i) => {
+      const up = card.querySelector('.widget-move-up');
+      const down = card.querySelector('.widget-move-down');
+      if (up instanceof HTMLButtonElement) up.disabled = i === 0;
+      if (down instanceof HTMLButtonElement) down.disabled = i === cards.length - 1;
+    });
+  }
+
+  /**
+   * Move painel uma posição (−1 sobe, +1 desce).
+   * @param {string} id
+   * @param {-1|1} dir
+   */
+  function movePanel(id, dir) {
+    const i = visibleOrder.indexOf(id);
+    if (i < 0) return;
+    const j = i + dir;
+    if (j < 0 || j >= visibleOrder.length) return;
+
+    const neighborId = visibleOrder[j];
+    visibleOrder[i] = neighborId;
+    visibleOrder[j] = id;
+
+    const card = grid.querySelector(`[data-widget-id="${id}"]`);
+    const neighbor = grid.querySelector(`[data-widget-id="${neighborId}"]`);
+    if (!card || !neighbor) {
+      persistOrder();
+      rebuild();
       return;
     }
 
-    for (const id of order) {
-      if (!FACTORY[id]) {
-        continue;
-      }
+    if (dir === -1) {
+      grid.insertBefore(card, neighbor);
+    } else if (neighbor.nextElementSibling) {
+      grid.insertBefore(card, neighbor.nextElementSibling);
+    } else {
+      grid.appendChild(card);
+    }
+
+    const wi = widgets.findIndex((w) => w.id === id);
+    const wj = widgets.findIndex((w) => w.id === neighborId);
+    if (wi >= 0 && wj >= 0) {
+      const tw = widgets[wi];
+      widgets[wi] = widgets[wj];
+      widgets[wj] = tw;
+    }
+
+    persistOrder();
+    refreshMoveButtons();
+  }
+
+  function mountWidgets() {
+    teardownWidgets();
+
+    if (!visibleOrder.length) {
+      grid.append(
+        el('div', { className: 'no-panels' }, [
+          el('p', { className: 'muted', text: t('no_panels') }),
+          el('button', {
+            type: 'button',
+            className: 'btn btn-sm',
+            text: t('customize_panels'),
+            onClick: () =>
+              openCustomize(customizeHost, (newOrder) => {
+                visibleOrder = Array.isArray(newOrder)
+                  ? [...newOrder]
+                  : [...(getSettings().widgetOrder || [])];
+                rebuild();
+              }),
+          }),
+        ])
+      );
+      return;
+    }
+
+    for (const id of visibleOrder) {
+      if (!FACTORY[id]) continue;
+
       const w = FACTORY[id]();
       widgets.push(w);
       const node = w.mount();
-      node.draggable = true;
+      node.draggable = false;
       node.dataset.widgetId = id;
       applySizeClass(node, id);
 
       const header = node.querySelector('.widget-header');
       if (header) {
         header.classList.add('widget-header-actions');
+        const actions = el('div', { className: 'widget-actions' });
 
-        const sizeBtn = el('button', {
-          type: 'button',
-          className: 'widget-size-btn',
-          title: t('widget_size_cycle'),
-          'aria-label': t('widget_size_cycle'),
-          text: getWidgetSize(id).toUpperCase(),
-          onClick: (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            const next = cycleWidgetSize(id);
-            applySizeClass(node, id);
-            sizeBtn.textContent = getWidgetSize(id).toUpperCase();
-            // mapa precisa recalcular tiles
-            if (w.map && typeof w.map.invalidateSize === 'function') {
-              setTimeout(() => w.map.invalidateSize(), 50);
-            }
-            void next;
-          },
+        const upBtn = document.createElement('button');
+        upBtn.type = 'button';
+        upBtn.className = 'widget-move-up';
+        upBtn.title = t('widget_move_up');
+        upBtn.setAttribute('aria-label', t('widget_move_up'));
+        upBtn.textContent = '▲';
+        upBtn.addEventListener('click', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          movePanel(id, -1);
         });
-        sizeBtn.draggable = false;
-        sizeBtn.addEventListener('mousedown', (e) => e.stopPropagation());
 
-        const removeBtn = el('button', {
-          type: 'button',
-          className: 'widget-remove',
-          title: t('widget_hide'),
-          'aria-label': t('widget_hide'),
-          text: '×',
-          onClick: (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            hideWidget(id);
-            rebuild();
-          },
+        const downBtn = document.createElement('button');
+        downBtn.type = 'button';
+        downBtn.className = 'widget-move-down';
+        downBtn.title = t('widget_move_down');
+        downBtn.setAttribute('aria-label', t('widget_move_down'));
+        downBtn.textContent = '▼';
+        downBtn.addEventListener('click', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          movePanel(id, 1);
         });
-        removeBtn.draggable = false;
-        removeBtn.addEventListener('mousedown', (e) => e.stopPropagation());
 
-        header.append(sizeBtn, removeBtn);
+        const sizeBtn = document.createElement('button');
+        sizeBtn.type = 'button';
+        sizeBtn.className = 'widget-size-btn';
+        sizeBtn.title = t('widget_size_cycle');
+        sizeBtn.setAttribute('aria-label', t('widget_size_cycle'));
+        sizeBtn.textContent = getWidgetSize(id).toUpperCase();
+        sizeBtn.addEventListener('click', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          cycleWidgetSize(id);
+          applySizeClass(node, id);
+          sizeBtn.textContent = getWidgetSize(id).toUpperCase();
+          if (w.map && typeof w.map.invalidateSize === 'function') {
+            setTimeout(() => w.map.invalidateSize(), 50);
+          }
+        });
+
+        const removeBtn = document.createElement('button');
+        removeBtn.type = 'button';
+        removeBtn.className = 'widget-remove';
+        removeBtn.title = t('widget_hide');
+        removeBtn.setAttribute('aria-label', t('widget_hide'));
+        removeBtn.textContent = '×';
+        removeBtn.addEventListener('click', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          hidePanel(id);
+        });
+
+        actions.append(upBtn, downBtn, sizeBtn, removeBtn);
+        header.append(actions);
       }
 
       grid.append(node);
       w.update(payload());
     }
 
+    refreshMoveButtons();
+
     requestAnimationFrame(() => {
-      widgets.forEach((w) => {
+      for (const w of widgets) {
         if (w.map && typeof w.map.invalidateSize === 'function') {
           w.map.invalidateSize();
         }
-      });
+      }
     });
   }
 
   function sync() {
     const p = payload();
-    widgets.forEach((w) => w.update(p));
+    for (const w of widgets) w.update(p);
   }
 
   function rebuild() {
@@ -214,7 +324,29 @@ export async function renderDashboardPage(container) {
     mountWidgets();
   }
 
-  enableReorder(grid);
+  /**
+   * @param {string} id
+   */
+  function hidePanel(id) {
+    if (!id) return;
+    visibleOrder = visibleOrder.filter((w) => w !== id);
+
+    const idx = widgets.findIndex((w) => w.id === id);
+    if (idx >= 0) {
+      try {
+        widgets[idx].destroy();
+      } catch {
+        grid.querySelector(`[data-widget-id="${id}"]`)?.remove();
+      }
+      widgets.splice(idx, 1);
+    } else {
+      grid.querySelector(`[data-widget-id="${id}"]`)?.remove();
+    }
+
+    updateSettings({ widgetOrder: [...visibleOrder] });
+    if (!visibleOrder.length) mountWidgets();
+    else refreshMoveButtons();
+  }
 
   const compareCity = getSettings().compareCity;
   if (compareCity && !getState().compareWeather) {
@@ -229,14 +361,16 @@ export async function renderDashboardPage(container) {
     EventBus.on(Events.OFFICIAL_ALERTS_UPDATED, sync),
     EventBus.on(Events.COMPARE_UPDATED, sync),
     EventBus.on(Events.LOADING, sync),
-    EventBus.on(Events.SETTINGS_CHANGED, (s) => {
-      document.documentElement.classList.toggle(
-        'compact-mode',
-        s?.compactMode ?? getSettings().compactMode
-      );
+    EventBus.on(Events.SETTINGS_CHANGED, () => {
+      document.documentElement.classList.toggle('compact-mode', getSettings().compactMode);
       hint.textContent = t('reorder_hint');
       customizeBtn.textContent = t('customize_panels');
-      // unidades/idioma: re-render dos widgets; ordem/tamanho: quem mudou já chama rebuild
+      for (const w of widgets) {
+        const node = w.root;
+        if (node && w.id) applySizeClass(node, w.id);
+        const sizeBtn = node?.querySelector?.('.widget-size-btn');
+        if (sizeBtn) sizeBtn.textContent = getWidgetSize(w.id).toUpperCase();
+      }
       sync();
     }),
   ];
@@ -251,11 +385,11 @@ export async function renderDashboardPage(container) {
 
 /**
  * @param {HTMLElement} host
- * @param {() => void} onDone
+ * @param {(order?: string[]) => void} onDone
  */
 function openCustomize(host, onDone) {
   host.innerHTML = '';
-  const visible = new Set(getSettings().widgetOrder);
+  const visible = new Set(getSettings().widgetOrder || []);
   const sizes = { ...getSettings().widgetSizes };
 
   const panel = el('div', { className: 'customize-panel' }, [
@@ -282,49 +416,41 @@ function openCustomize(host, onDone) {
   const sizeSelects = new Map();
 
   for (const id of WIDGET_CATALOG) {
-    if (!FACTORY[id]) {
-      continue;
-    }
-    const input = el('input', {
-      type: 'checkbox',
-      checked: visible.has(id) || undefined,
-      id: `cust-${id}`,
-    });
+    if (!FACTORY[id]) continue;
+
+    // createElement + .checked (evita bug do el() com atributo checked)
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.id = `cust-${id}`;
+    input.checked = visible.has(id);
+    input.dataset.widgetId = id;
     checks.set(id, input);
 
-    const sizeSel = el('select', {
-      className: 'customize-size-select',
-      title: t('widget_size'),
-      onClick: (e) => e.stopPropagation(),
-      onChange: () => {
-        /* applied on save */
-      },
-    });
+    const sizeSel = document.createElement('select');
+    sizeSel.className = 'customize-size-select';
+    sizeSel.title = t('widget_size');
+    sizeSel.addEventListener('click', (e) => e.stopPropagation());
     for (const s of WIDGET_SIZES) {
-      const opt = el('option', {
-        value: s,
-        text: t(`widget_size_${s}`),
-      });
-      if ((sizes[id] || 's') === s) {
-        opt.selected = true;
-      }
+      const opt = document.createElement('option');
+      opt.value = s;
+      opt.textContent = t(`widget_size_${s}`);
+      if ((sizes[id] || getWidgetSize(id) || 's') === s) opt.selected = true;
       sizeSel.append(opt);
     }
     sizeSelects.set(id, sizeSel);
 
-    list.append(
-      el('div', { className: 'customize-row' }, [
-        el('label', { className: 'customize-item', for: `cust-${id}` }, [
-          input,
-          el('span', { text: t(LABEL_KEYS[id] || id) }),
-        ]),
-        sizeSel,
-      ])
-    );
+    const label = document.createElement('label');
+    label.className = 'customize-item';
+    label.htmlFor = `cust-${id}`;
+    label.append(input, document.createTextNode(' ' + t(LABEL_KEYS[id] || id)));
+
+    const row = document.createElement('div');
+    row.className = 'customize-row';
+    row.append(label, sizeSel);
+    list.append(row);
   }
 
   panel.append(list);
-
   panel.append(
     el('div', { className: 'customize-actions' }, [
       el('button', {
@@ -332,20 +458,35 @@ function openCustomize(host, onDone) {
         className: 'btn btn-primary',
         text: t('save'),
         onClick: () => {
-          const ids = [...checks.entries()].filter(([, inp]) => inp.checked).map(([id]) => id);
-          if (!ids.length) {
-            ids.push('temperature');
+          const ids = [];
+          for (const [id, inp] of checks) {
+            if (inp.checked) ids.push(id);
           }
+          if (!ids.length) ids.push('forecastHome');
+
           const nextSizes = { ...getSettings().widgetSizes };
           for (const [id, sel] of sizeSelects) {
-            const v = sel.value;
-            if (WIDGET_SIZES.includes(/** @type {any} */ (v))) {
-              nextSizes[id] = v;
+            if (WIDGET_SIZES.includes(/** @type {any} */ (sel.value))) {
+              nextSizes[id] = /** @type {'s'|'m'|'l'} */ (sel.value);
             }
           }
-          setVisibleWidgets(ids, nextSizes);
+
+          // Garante tamanho L para a home de previsão quando reativada
+          if (ids.includes('forecastHome') && !nextSizes.forecastHome) {
+            nextSizes.forecastHome = 'l';
+          }
+
+          const saved = setVisibleWidgets(ids, nextSizes);
+          // Re-lê do storage (não confiar só na memória da sessão)
+          const order = [...(getSettings().widgetOrder || saved?.widgetOrder || ids)];
           host.innerHTML = '';
-          onDone();
+
+          if (!verifyWidgetOrderPersisted(order)) {
+            toastError(t('settings_save_failed'));
+          } else {
+            toastSuccess(t('settings_saved'));
+          }
+          onDone(order);
         },
       }),
       el('button', {
@@ -357,8 +498,9 @@ function openCustomize(host, onDone) {
             widgetOrder: [...DEFAULT_SETTINGS.widgetOrder],
             widgetSizes: { ...DEFAULT_SETTINGS.widgetSizes },
           });
+          const order = [...(getSettings().widgetOrder || DEFAULT_SETTINGS.widgetOrder)];
           host.innerHTML = '';
-          onDone();
+          onDone(order);
         },
       }),
       el('button', {
@@ -373,59 +515,4 @@ function openCustomize(host, onDone) {
   );
 
   host.append(panel);
-}
-
-/**
- * @param {HTMLElement} grid
- */
-function enableReorder(grid) {
-  grid.addEventListener('dragstart', (e) => {
-    const card = e.target.closest('[data-widget-id]');
-    if (!card || e.target.closest('.widget-remove, .widget-size-btn')) {
-      return;
-    }
-    card.classList.add('dragging');
-    e.dataTransfer.effectAllowed = 'move';
-  });
-
-  grid.addEventListener('dragend', (e) => {
-    const card = e.target.closest('[data-widget-id]');
-    card?.classList.remove('dragging');
-    const order = [...grid.querySelectorAll('[data-widget-id]')].map((n) => n.dataset.widgetId);
-    if (order.length) {
-      updateSettings({ widgetOrder: order });
-    }
-  });
-
-  grid.addEventListener('dragover', (e) => {
-    e.preventDefault();
-    const after = getDragAfterElement(grid, e.clientY, e.clientX);
-    const dragging = grid.querySelector('.dragging');
-    if (!dragging) {
-      return;
-    }
-    if (after == null) {
-      grid.append(dragging);
-    } else {
-      grid.insertBefore(dragging, after);
-    }
-  });
-}
-
-/**
- * @param {HTMLElement} container
- * @param {number} y
- * @param {number} x
- */
-function getDragAfterElement(container, y, x) {
-  const els = [...container.querySelectorAll('[data-widget-id]:not(.dragging)')];
-  let closest = { offset: Number.NEGATIVE_INFINITY, element: null };
-  for (const child of els) {
-    const box = child.getBoundingClientRect();
-    const offset = y - box.top - box.height / 2 + (x - box.left - box.width / 2) * 0.01;
-    if (offset < 0 && offset > closest.offset) {
-      closest = { offset, element: child };
-    }
-  }
-  return closest.element;
 }

@@ -34,7 +34,7 @@ except ImportError:  # pragma: no cover
     HAS_WEBSOCKETS = False
 
 ROOT = Path(__file__).resolve().parent
-APP_VERSION = "0.7.5"
+APP_VERSION = "0.8.10"
 
 
 def resolve_port() -> int:
@@ -71,6 +71,21 @@ INPE_10MIN_DIR = INPE_CSV_BASE + "/10min/"
 
 # cache em memória
 _CACHE: dict[str, tuple[float, object]] = {}
+
+# OpenSky free/anonymous: 429 frequente. Após 429, evita novas chamadas por um tempo.
+_OPENSKY_COOLDOWN_UNTIL = 0.0
+_OPENSKY_COOLDOWN_S = 45.0
+_OPENSKY_LOCK = threading.Lock()
+
+
+def _opensky_on_cooldown() -> bool:
+    return time.time() < _OPENSKY_COOLDOWN_UNTIL
+
+
+def _opensky_mark_rate_limited() -> None:
+    global _OPENSKY_COOLDOWN_UNTIL
+    with _OPENSKY_LOCK:
+        _OPENSKY_COOLDOWN_UNTIL = max(_OPENSKY_COOLDOWN_UNTIL, time.time() + _OPENSKY_COOLDOWN_S)
 
 
 def cache_get(key: str, ttl: float):
@@ -857,6 +872,7 @@ class Handler(SimpleHTTPRequestHandler):
                     "fires_merged": True,
                     "deforestation_proxy": True,
                     "flights_proxy": True,
+                    "flights_adsb": True,
                     "ships_proxy": True,
                     "iss_proxy": True,
                     "earthquakes_proxy": True,
@@ -903,9 +919,6 @@ class Handler(SimpleHTTPRequestHandler):
             return
         if parsed.path == "/api/satellite/goes":
             self.handle_satellite_goes(parsed)
-            return
-        if parsed.path == "/api/anatel/proxy":
-            self.handle_anatel_proxy(parsed)
             return
         return super().do_GET()
 
@@ -1223,7 +1236,7 @@ class Handler(SimpleHTTPRequestHandler):
                 timeout=10,
                 accept="application/json",
                 extra_headers={
-                    "User-Agent": "KeClima/0.4 (weather-pwa)",
+                    "User-Agent": "KeClima/0.8.10 (weather-pwa)",
                     "Referer": "https://hexdb.io/",
                 },
             )
@@ -1250,7 +1263,7 @@ class Handler(SimpleHTTPRequestHandler):
                 f"https://api.adsbdb.com/v0/aircraft/{hex_id}",
                 timeout=10,
                 accept="application/json",
-                extra_headers={"User-Agent": "KeClima/0.4 (weather-pwa)"},
+                extra_headers={"User-Agent": "KeClima/0.8.10 (weather-pwa)"},
             )
             if st == 200:
                 j = json.loads(body.decode("utf-8", errors="replace"))
@@ -1304,7 +1317,7 @@ class Handler(SimpleHTTPRequestHandler):
                 f"https://api.adsbdb.com/v0/callsign/{urllib.parse.quote(cs)}",
                 timeout=12,
                 accept="application/json",
-                extra_headers={"User-Agent": "KeClima/0.4 (weather-pwa)"},
+                extra_headers={"User-Agent": "KeClima/0.8.10 (weather-pwa)"},
             )
             if st == 200:
                 j = json.loads(body.decode("utf-8", errors="replace"))
@@ -1351,7 +1364,7 @@ class Handler(SimpleHTTPRequestHandler):
                     timeout=10,
                     accept="application/json",
                     extra_headers={
-                        "User-Agent": "KeClima/0.4 (weather-pwa)",
+                        "User-Agent": "KeClima/0.8.10 (weather-pwa)",
                         "Referer": "https://hexdb.io/",
                     },
                 )
@@ -1510,7 +1523,7 @@ class Handler(SimpleHTTPRequestHandler):
         usr = os.environ.get("OPENSKY_USERNAME") or os.environ.get("OPENSKY_USER")
         pwd = os.environ.get("OPENSKY_PASSWORD") or os.environ.get("OPENSKY_PASS")
         extra_headers = {
-            "User-Agent": "KeClima/0.6 (weather-pwa; opensky-proxy)",
+            "User-Agent": "KeClima/0.8.10 (weather-pwa; opensky-proxy)",
             "Referer": "https://opensky-network.org/",
             "Origin": "https://opensky-network.org",
         }
@@ -1530,7 +1543,7 @@ class Handler(SimpleHTTPRequestHandler):
                     adsb_url,
                     timeout=15,
                     accept="application/json",
-                    extra_headers={"User-Agent": "KeClima/0.6 (weather-pwa; adsb-proxy)"},
+                    extra_headers={"User-Agent": "KeClima/0.8.10 (weather-pwa; adsb-proxy)"},
                 )
                 if st == 200 and bd:
                     raw = json.loads(bd.decode("utf-8", errors="replace"))
@@ -1618,7 +1631,7 @@ class Handler(SimpleHTTPRequestHandler):
                     adsb_url,
                     timeout=15,
                     accept="application/json",
-                    extra_headers={"User-Agent": "KeClima/0.6 (weather-pwa; adsb-proxy)"},
+                    extra_headers={"User-Agent": "KeClima/0.8.10 (weather-pwa; adsb-proxy)"},
                 )
                 if status == 200 and body:
                     raw = json.loads(body.decode("utf-8", errors="replace"))
@@ -1705,20 +1718,51 @@ class Handler(SimpleHTTPRequestHandler):
             max_n = 2500
             truncated = len(flights_all) > max_n
             flights = flights_all[:max_n]
-            payload = {
-                "time": int(time.time()),
-                "count": len(flights),
-                "flights": flights,
-                "source": "ADSB.lol",
-                "bbox": {"west": west, "south": south, "east": east, "north": north},
-                "truncated": truncated,
-                "scope": "bbox",
-            }
-            cache_set(cache_key, payload)
-            self.send_json(payload)
+            # Com aeronaves: responde ADSB e evita OpenSky (limite anônimo).
+            # Sem aeronaves: ainda tenta OpenSky se não estiver em cooldown (cobertura BR interior).
+            if flights or _opensky_on_cooldown() or use_global:
+                payload = {
+                    "time": int(time.time()),
+                    "count": len(flights),
+                    "flights": flights,
+                    "source": "ADSB.lol",
+                    "bbox": {"west": west, "south": south, "east": east, "north": north},
+                    "truncated": truncated,
+                    "scope": "bbox",
+                    "degraded": bool(_opensky_on_cooldown() and not flights),
+                }
+                cache_set(cache_key, payload)
+                self.send_json(payload)
+                return
+
+        def soft_rate_limited_response():
+            """Nunca devolve HTTP 429 ao browser — UI trata como degradado, não erro fatal."""
+            fb = get_stale_fallback() or try_adsb_lol_fallback()
+            if fb:
+                out = dict(fb)
+                out["degraded"] = True
+                out.setdefault("detail", "OpenSky em cooldown; usando fallback")
+                self.send_json(out)
+                return
+            self.send_json(
+                {
+                    "time": int(time.time()),
+                    "count": 0,
+                    "flights": [],
+                    "source": "ADSB.lol / OpenSky",
+                    "bbox": {"west": west, "south": south, "east": east, "north": north},
+                    "scope": "degraded",
+                    "degraded": True,
+                    "detail": "Limite temporário de tráfego aéreo — tentando novamente em breve",
+                }
+            )
+
+        # OpenSky em cooldown: não martela a API anônima
+        if _opensky_on_cooldown():
+            soft_rate_limited_response()
             return
 
-        # Fallback para OpenSky Network
+        # Fallback / complemento: OpenSky Network
         if use_global:
             url = "https://opensky-network.org/api/states/all"
         else:
@@ -1743,27 +1787,17 @@ class Handler(SimpleHTTPRequestHandler):
             if fb:
                 self.send_json(fb)
                 return
-            self.send_json({"error": "proxy_failed", "detail": str(exc)}, 502)
+            self.send_json({"error": "proxy_failed", "detail": str(exc), "flights": [], "count": 0}, 502)
             return
 
         if status == 429:
-            fb = get_stale_fallback() or try_adsb_lol_fallback()
-            if fb:
-                self.send_json(fb)
-                return
-            self.send_json(
-                {
-                    "error": "rate_limited",
-                    "detail": "OpenSky rate limit — tente em alguns segundos",
-                    "flights": [],
-                    "count": 0,
-                    "source": "OpenSky Network",
-                },
-                429,
-            )
+            _opensky_mark_rate_limited()
+            soft_rate_limited_response()
             return
 
         if status != 200:
+            if status in (401, 403, 503):
+                _opensky_mark_rate_limited()
             fb = get_stale_fallback() or try_adsb_lol_fallback()
             if fb:
                 self.send_json(fb)
@@ -1774,6 +1808,7 @@ class Handler(SimpleHTTPRequestHandler):
                     "detail": f"HTTP {status}",
                     "flights": [],
                     "count": 0,
+                    "degraded": True,
                 },
                 502 if status >= 500 else status,
             )
@@ -1869,7 +1904,7 @@ class Handler(SimpleHTTPRequestHandler):
                         timeout=20,
                         accept="application/json",
                         extra_headers={
-                            "User-Agent": "KeClima/0.6 (weather-pwa; opensky-proxy)",
+                            "User-Agent": "KeClima/0.8.10 (weather-pwa; opensky-proxy)",
                             "Referer": "https://opensky-network.org/",
                         },
                     )
@@ -2471,37 +2506,6 @@ class Handler(SimpleHTTPRequestHandler):
         }
         cache_set(cache_key, payload)
         self.send_json(payload)
-
-    def handle_anatel_proxy(self, parsed: urllib.parse.ParseResult):
-        """
-        Proxy WMS para o Geoportal ANATEL (bypassa CORS e Cloudflare bloqueios).
-        """
-        query_string = parsed.query
-        anatel_url = f"https://sistemas.anatel.gov.br/geoportal/server/services/Mosaico/ERB_Licenciadas/MapServer/WMSServer?{query_string}"
-        try:
-            # Baixa o tile da ANATEL usando fetch_url
-            status, raw = fetch_url(
-                anatel_url,
-                timeout=20,
-                accept="image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
-                extra_headers={
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                    "Referer": "https://sistemas.anatel.gov.br/geoportal/",
-                }
-            )
-            if status != 200:
-                self.send_response(status)
-                self.end_headers()
-                return
-            self.send_response(200)
-            self.send_header("Content-Type", "image/png")
-            self.send_header("Cache-Control", "public, max-age=86400") # Cache de 1 dia
-            self.end_headers()
-            self.wfile.write(raw)
-        except Exception as exc:
-            self.send_response(502)
-            self.end_headers()
-            self.wfile.write(str(exc).encode())
 
     def send_json(self, obj, status: int = 200):
         body = json.dumps(obj, ensure_ascii=False).encode("utf-8")

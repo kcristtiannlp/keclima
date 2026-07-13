@@ -69,6 +69,23 @@ async function requestFlights(box, includeGround, global, signal) {
   }
 
   if (!res.ok) {
+    // Proxy novo devolve 200 degradado; 429 legado = soft payload se tiver lista
+    if (
+      (res.status === 429 || body?.error === 'rate_limited') &&
+      body &&
+      Array.isArray(body.flights)
+    ) {
+      return {
+        time: body.time ?? null,
+        count: body.count ?? body.flights.length,
+        flights: body.flights,
+        source: body.source || 'OpenSky Network',
+        scope: body.scope || 'degraded',
+        truncated: !!body.truncated,
+        degraded: true,
+        detail: body.detail || null,
+      };
+    }
     const code =
       res.status === 404
         ? 'flights_proxy_missing'
@@ -79,7 +96,8 @@ async function requestFlights(box, includeGround, global, signal) {
     err.code = code;
     throw err;
   }
-  if (body?.error) {
+  // Erro sem lista de voos; se vier degradado com flights=[], trata como ok vazio
+  if (body?.error && !(Array.isArray(body.flights) && body.degraded)) {
     const err = new Error(body.error);
     err.code = body.error;
     throw err;
@@ -125,8 +143,14 @@ export async function fetchLiveFlights(opts) {
       source: data.source || 'OpenSky Network',
       scope: data.scope || (global ? 'global' : 'bbox'),
       truncated: !!data.truncated,
+      degraded: !!data.degraded,
+      detail: data.detail || null,
     };
-    cacheSet(cacheKey, payload, CACHE_TTL.flights || 10 * 1000);
+    // Cache um pouco mais longo quando degradado (evita spam no limite)
+    const ttl = payload.degraded
+      ? Math.max(CACHE_TTL.flights || 10 * 1000, 25 * 1000)
+      : CACHE_TTL.flights || 10 * 1000;
+    cacheSet(cacheKey, payload, ttl);
     return payload;
   } catch (err) {
     if (err?.code === 'flights_proxy_missing' || err?.code === 'rate_limited') {

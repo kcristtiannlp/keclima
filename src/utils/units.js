@@ -146,6 +146,48 @@ export function formatPercent(pct) {
 }
 
 /**
+ * Converte datas do Open-Meteo sem deslocar o dia no fuso local.
+ * Strings só-data (`YYYY-MM-DD`) viram meio-dia local — `new Date("YYYY-MM-DD")`
+ * é meia-noite UTC e no Brasil (UTC−3) o dia da semana fica 1 dia errado.
+ *
+ * @param {string|Date|number|null|undefined} value
+ * @returns {Date}
+ */
+export function parseWeatherDate(value) {
+  if (value instanceof Date) {
+    return value;
+  }
+  if (typeof value === 'number') {
+    return new Date(value);
+  }
+  if (typeof value === 'string') {
+    const s = value.trim();
+    // daily: "2026-07-12"
+    const dayOnly = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+    if (dayOnly) {
+      const y = Number(dayOnly[1]);
+      const m = Number(dayOnly[2]);
+      const d = Number(dayOnly[3]);
+      return new Date(y, m - 1, d, 12, 0, 0);
+    }
+    // hourly sem Z: "2026-07-12T15:00" (hora local do timezone da API)
+    const localHour = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/.exec(s);
+    if (localHour && !/[zZ]|[+-]\d{2}:?\d{2}$/.test(s)) {
+      return new Date(
+        Number(localHour[1]),
+        Number(localHour[2]) - 1,
+        Number(localHour[3]),
+        Number(localHour[4]),
+        Number(localHour[5]),
+        Number(localHour[6] || 0)
+      );
+    }
+    return new Date(s);
+  }
+  return new Date(NaN);
+}
+
+/**
  * @param {string|Date|number} value
  * @param {Intl.DateTimeFormatOptions} [options]
  * @returns {string}
@@ -154,7 +196,7 @@ export function formatTime(value, options = { hour: '2-digit', minute: '2-digit'
   if (!value) {
     return '—';
   }
-  const d = value instanceof Date ? value : new Date(value);
+  const d = parseWeatherDate(value);
   if (Number.isNaN(d.getTime())) {
     return '—';
   }
@@ -171,7 +213,7 @@ export function formatDateTime(value) {
   if (!value) {
     return '—';
   }
-  const d = value instanceof Date ? value : new Date(value);
+  const d = parseWeatherDate(value);
   if (Number.isNaN(d.getTime())) {
     return '—';
   }
@@ -191,7 +233,10 @@ export function formatDateTime(value) {
  * @returns {string}
  */
 export function formatWeekday(value) {
-  const d = value instanceof Date ? value : new Date(value);
+  const d = parseWeatherDate(value);
+  if (Number.isNaN(d.getTime())) {
+    return '—';
+  }
   const lang = getSettings().language || 'pt';
   const locale = lang === 'en' ? 'en-US' : lang === 'es' ? 'es-ES' : 'pt-BR';
   return d.toLocaleDateString(locale, { weekday: 'short', day: '2-digit', month: 'short' });

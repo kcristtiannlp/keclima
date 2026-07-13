@@ -111,17 +111,18 @@ check "ISS position" "$BASE/api/iss/now" '"latitude"'
 # 7. API - Earthquakes
 echo ""
 echo "--- Earthquakes API ---"
-check "Earthquakes" "$BASE/api/earthquakes/live?west=-180&south=-90&east=180&north=90" '"earthquakes"'
+check "Earthquakes" "$BASE/api/earthquakes/live?west=-180&south=-90&east=180&north=90" '"events"'
 
 # 8. API - EONET
 echo ""
 echo "--- EONET API ---"
 check "EONET events" "$BASE/api/eonet/events?limit=5" '"events"'
 
-# 9. API - Fires
+# 9. API - Fires (merged INPE+FIRMS; response uses "points")
 echo ""
 echo "--- Fires API ---"
-check "FIRMS hotspots" "$BASE/api/firms/hotspots?west=-47&south=-24&east=-43&north=-22&days=1" '"hotspots"'
+check "Fires merged (INPE+FIRMS)" "$BASE/api/fires/hotspots?west=-55&south=-25&east=-40&north=-15&days=1" '"points"'
+check "FIRMS public CSV" "$BASE/api/firms/hotspots?west=-55&south=-25&east=-40&north=-15&days=1" '"points"'
 
 # 10. API - INMET
 echo ""

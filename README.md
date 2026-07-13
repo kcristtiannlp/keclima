@@ -2,7 +2,7 @@
 
 PWA de meteorologia e território (Brasil): clima, qualidade do ar, mapa, focos de fogo e desmatamento.
 
-**Versão 0.7.4** · HTML/CSS/JS ES Modules · sem React/Vue/Angular
+**Versão 0.8.10** · HTML/CSS/JS ES Modules · sem React/Vue/Angular
 
 ## Executar
 
@@ -12,24 +12,26 @@ python3 serve.py 8080
 # http://localhost:8080
 ```
 
-> Use **`serve.py`** (proxy para FIRMS, INMET, DETER, OpenSky, AIS, ISS, USGS, EONET e GOES).
+> Use **`serve.py`** (proxy para FIRMS, INMET, DETER, OpenSky/ADSB.lol, AIS, ISS, USGS, EONET e GOES).
 > `python3 -m http.server` só serve arquivos estáticos — camadas oficiais falham por CORS.
 
 | Variável | Uso |
 |----------|-----|
 | `PORT` | Porta HTTP (PaaS). Padrão `8080`. |
+| `OPENSKY_USERNAME` / `OPENSKY_PASSWORD` | Opcional — credenciais OpenSky (melhor cota). |
+| `AISSTREAM_API_KEY` | Opcional — AIS global (navios); sem chave usa Digitraffic (Europa). |
 
 ## O que tem
 
 | Módulo | Conteúdo |
 |--------|----------|
-| Clima | Open-Meteo (previsão, UV, vento, etc.) |
+| Previsão | Open-Meteo — home com agora, 48 h, 10 dias e alertas INMET |
 | Ar | Open-Meteo Air Quality |
-| Observado BR | INMET (estação mais próxima) |
-| Mapa | OSM, Carto, OpenTopo, satélite/topo Esri, radar RainViewer, voos, navios, ISS e riscos |
+| Observado BR | INMET (estação mais próxima + avisos Alert-AS) |
+| Mapa | OSM, Carto, OpenTopo, satélite/topo Esri, radar RainViewer, SST (GHRSST/GIBS), voos, navios, ISS e riscos |
 | Focos | INPE Queimadas + NASA FIRMS (filtros) |
 | Desmate | INPE DETER + PRODES |
-| Voos | OpenSky (proxy) |
+| Voos | ADSB.lol (principal) + OpenSky (fallback) via proxy |
 | Satélite IV | GOES Clean IR (NOAA/NESDIS) em Gráficos → Satélite IV |
 | UI | Painéis S/M/L, temas, pt/en/es, PWA offline |
 
@@ -65,7 +67,7 @@ keclima/
 └── src/
     ├── api/providers/       # Open-Meteo, INMET, FIRMS, DETER, OpenSky…
     ├── components/          # Header, Nav, Toast…
-    ├── pages/ widgets/      # UI
+    ├── pages/ widgets/      # UI (ForecastHome, Map, …)
     ├── services/ storage/   # clima, cache, settings
     ├── data/mapCatalog.js   # catálogo de fontes do mapa
     └── styles/main.css

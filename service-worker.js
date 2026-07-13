@@ -2,7 +2,7 @@
  * KeClima Service Worker – shell completo + runtime inteligente.
  */
 
-const CACHE_VERSION = 'keclima-v0.7.5';
+const CACHE_VERSION = 'keclima-v0.8.10';
 const SHELL_CACHE = `${CACHE_VERSION}-shell`;
 const RUNTIME_CACHE = `${CACHE_VERSION}-runtime`;
 const API_CACHE = `${CACHE_VERSION}-api`;
@@ -58,12 +58,14 @@ const SHELL_ASSETS = [
   './src/utils/mapBounds.js',
   './src/utils/units.js',
   './src/utils/weather.js',
+  './src/utils/forecastSummary.js',
   './src/widgets/AQIWidget.js',
   './src/widgets/AlertWidget.js',
   './src/widgets/ChartWidget.js',
   './src/widgets/CompareWidget.js',
   './src/widgets/ConditionsWidget.js',
   './src/widgets/DeforestationWidget.js',
+  './src/widgets/ForecastHomeWidget.js',
   './src/widgets/ForecastWidget.js',
   './src/widgets/HumidityWidget.js',
   './src/widgets/InmetWidget.js',
@@ -169,6 +171,16 @@ self.addEventListener('fetch', (event) => {
           headers: { 'Content-Type': 'application/json' },
         }))
       );
+      return;
+    }
+    // JS/CSS da app: network-first para personalização e correções não sumirem no F5
+    // (cache-first servia código antigo e a ordem dos painéis parecia “não gravar”)
+    if (
+      url.pathname.endsWith('.js') ||
+      url.pathname.endsWith('.css') ||
+      url.pathname.endsWith('service-worker.js')
+    ) {
+      event.respondWith(networkFirst(request, SHELL_CACHE));
       return;
     }
     event.respondWith(cacheFirst(request, SHELL_CACHE));

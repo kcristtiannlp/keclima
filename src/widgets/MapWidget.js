@@ -34,8 +34,10 @@ const EMPTY_TILE =
 /** RainViewer: zoom nativo máximo documentado = 7 */
 const RAINVIEWER_NATIVE_ZOOM = 7;
 const LIGHTNING_NATIVE_ZOOM = 7;
-/** OpenSky: poll de posição real (proxy cacheia ~10s) */
+/** OpenSky/ADSB: poll de posição real (proxy cacheia ~10–20s) */
 const FLIGHTS_REFRESH_MS = 12000;
+/** Após limite/degradação, poll mais lento para não piorar 429 */
+const FLIGHTS_REFRESH_BACKOFF_MS = 28000;
 /** Máx. segundos a “continuar voando” sem novo fix da API */
 const FLIGHTS_MAX_EXTRAPOLATE_S = 28;
 /** Remove avião se sumir da API por este tempo */
@@ -405,7 +407,6 @@ export class MapWidget extends Widget {
     this._setupIss(gTraffic);
 
     this._addLayerToggle(gWeather, 'sst', t('layer_sst'), false, null, t('layer_sst_hint'));
-    this._addLayerToggle(gTerritory, 'anatel', t('layer_anatel'), false, null, t('layer_anatel_hint'));
 
     // Ao mover/zoom: recarrega camadas (debounce — evita abort/rate limit)
     this._dataMoveTimer = null;
@@ -489,20 +490,17 @@ export class MapWidget extends Widget {
         pane: 'overlayPane',
       }
     );
+    // NASA GIBS WMS — campo contínuo MUR (bom sobre o Atlântico/BR). maxNativeZoom evita tiles vazios em zoom urbano.
     this.layers.sst = L.tileLayer.wms('https://gibs.earthdata.nasa.gov/wms/epsg3857/best/wms.cgi', {
       layers: 'GHRSST_L4_MUR_Sea_Surface_Temperature',
       format: 'image/png',
       transparent: true,
       opacity: 0.65,
-      attribution: 'Sea Surface Temp &copy; NASA GHRSST'
-    });
-
-    this.layers.anatel = L.tileLayer.wms('https://sistemas.anatel.gov.br/geoportal/server/services/Mosaico/ERB_Licenciadas/MapServer/WMSServer', {
-      layers: '0',
-      format: 'image/png',
-      transparent: true,
-      opacity: 0.85,
-      attribution: 'Antenas &copy; ANATEL Mosaico'
+      maxZoom: 12,
+      maxNativeZoom: 8,
+      attribution:
+        'SST &copy; <a href="https://podaac.jpl.nasa.gov/">NASA GHRSST / GIBS</a>',
+      errorTileUrl: EMPTY_TILE,
     });
   }
 
@@ -1475,19 +1473,26 @@ export class MapWidget extends Widget {
     );
   }
 
-  _startFlightsLive() {
+  _startFlightsLive(intervalMs = FLIGHTS_REFRESH_MS) {
     this._stopFlightsLive();
     if (!this.map) {
       return;
     }
+    this._flightsPollMs = intervalMs;
     // Poll periódico; pan/zoom usa _dataMoveHandler (viewport global)
     this._flightsTimer = setInterval(() => {
       if (this._flightsEnabled) {
         this._loadFlights({ silent: true });
       }
-    }, FLIGHTS_REFRESH_MS);
+    }, intervalMs);
     this._flightsLastTick = performance.now();
     this._tickFlightsAnimation();
+  }
+
+  _setFlightsPollInterval(ms) {
+    if (!this._flightsEnabled) return;
+    if (this._flightsPollMs === ms) return;
+    this._startFlightsLive(ms);
   }
 
   _stopFlightsLive() {
@@ -1778,10 +1783,13 @@ export class MapWidget extends Widget {
     const meta = this._flightsMeta || {};
     const trunc = meta.truncated ? ` · ${t('flights_truncated')}` : '';
     const scope = meta.scope ? ` · ${meta.scope}` : '';
-    this._flightsStatus.textContent =
-      n === 0
-        ? t('flights_none')
-        : `${t('flights_count')}: ${n} · ${this._flightsSource}${scope}${trunc}`;
+    if (n === 0) {
+      this._flightsStatus.textContent = meta.degraded
+        ? t('flights_rate_limited_soft')
+        : t('flights_none_area');
+      return;
+    }
+    this._flightsStatus.textContent = `${t('flights_count')}: ${n} · ${this._flightsSource}${scope}${trunc}`;
   }
 
   /**
@@ -1833,9 +1841,20 @@ export class MapWidget extends Widget {
         count: result.count,
         scope: result.scope,
         truncated: result.truncated,
+        degraded: !!result.degraded,
       };
+      const flights = result.flights || [];
+      // Degradado sem novos fix: mantém traços existentes (não apaga o mapa)
+      if (result.degraded && flights.length === 0 && this._flightTracks.size > 0) {
+        this._setFlightsPollInterval(FLIGHTS_REFRESH_BACKOFF_MS);
+        if (this._flightsStatus) {
+          this._flightsStatus.classList.remove('hidden');
+          this._flightsStatus.textContent = t('flights_rate_limited_soft');
+        }
+        return;
+      }
       const seen = new Set();
-      for (const f of result.flights) {
+      for (const f of flights) {
         if (!f.icao24 || f.latitude == null || f.longitude == null) {
           continue;
         }
@@ -1853,6 +1872,15 @@ export class MapWidget extends Widget {
       }
       this._pruneStaleFlights();
       this._updateFlightsStatusCount();
+      if (result.degraded) {
+        this._setFlightsPollInterval(FLIGHTS_REFRESH_BACKOFF_MS);
+        if (this._flightsStatus && flights.length === 0) {
+          this._flightsStatus.classList.remove('hidden');
+          this._flightsStatus.textContent = t('flights_none_area');
+        }
+      } else {
+        this._setFlightsPollInterval(FLIGHTS_REFRESH_MS);
+      }
       if (this.flightsLayer && !this.map.hasLayer(this.flightsLayer)) {
         this.flightsLayer.addTo(this.map);
       }
@@ -1863,20 +1891,28 @@ export class MapWidget extends Widget {
       console.warn('[MapWidget] flights', err);
       const msgKey =
         err?.code === 'rate_limited'
-          ? 'flights_rate_limited'
+          ? 'flights_rate_limited_soft'
           : err?.code === 'flights_proxy_missing' || err?.code === 'timeout'
             ? 'flights_error_proxy'
             : 'flights_error';
+      // Rate limit: mantém aviões no mapa e só avisa no status (sem toast a cada poll)
+      if (err?.code === 'rate_limited') {
+        this._setFlightsPollInterval(FLIGHTS_REFRESH_BACKOFF_MS);
+        if (this._flightsStatus) {
+          this._flightsStatus.classList.remove('hidden');
+          this._flightsStatus.textContent = t(msgKey);
+        }
+        if (!opts.silent && this._flightTracks.size === 0) {
+          toastWarning(t(msgKey));
+        }
+        return;
+      }
       if (this._flightsStatus) {
         this._flightsStatus.classList.remove('hidden');
         this._flightsStatus.textContent = t(msgKey);
       }
       if (!opts.silent) {
-        if (msgKey === 'flights_rate_limited') {
-          toastWarning(t(msgKey));
-        } else {
-          toastError(t(msgKey));
-        }
+        toastError(t(msgKey));
       }
     }
   }

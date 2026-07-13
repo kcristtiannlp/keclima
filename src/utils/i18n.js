@@ -101,6 +101,26 @@ const STRINGS = {
     unit_inhg: 'inHg',
     forecast_hourly: 'Previsão horária',
     forecast_daily: 'Previsão diária',
+    forecast_home_title: 'Previsão',
+    forecast_home_now: 'Agora',
+    forecast_home_today: 'Hoje',
+    forecast_home_48h: 'Próximas 48 horas',
+    forecast_home_10d: 'Próximos 10 dias',
+    forecast_home_pop_max_hint: 'Pico de probabilidade no dia: {pop}%',
+    forecast_home_rain_6h: 'Chuva (6 h)',
+    forecast_home_scroll_hint: 'Deslize para ver mais horas →',
+    forecast_home_blurb_empty: 'Sem dados de previsão no momento.',
+    forecast_home_blurb_day: 'Hoje: {condition}.',
+    forecast_home_blurb_rain: 'Chuva mais provável por volta de {when} ({pop}%).',
+    forecast_home_blurb_rain_mm:
+      'Chuva esperada por volta de {when} — até ~{mm} mm nas próximas horas ({pop}%).',
+    forecast_home_blurb_rain_maybe: 'Possibilidade de chuva ({pop}%) nas próximas horas.',
+    forecast_home_blurb_dry: 'Sem chuva relevante nas próximas horas.',
+    forecast_home_blurb_range: 'Temperatura entre {min}° e {max}° neste período.',
+    forecast_home_alert_more: '{n} avisos · tocar para detalhes',
+    forecast_home_alert_details: 'Detalhes',
+    forecast_home_alert_high: 'Alto',
+    forecast_home_alert_warn: 'Atenção',
     chart_temp: 'Temperatura',
     chart_pressure: 'Pressão',
     chart_humidity: 'Umidade',
@@ -255,6 +275,9 @@ const STRINGS = {
     flights_error: 'Não foi possível carregar voos',
     flights_error_proxy: 'Use python3 serve.py (proxy de voos). O servidor simples não basta.',
     flights_rate_limited: 'Limite da OpenSky atingido — aguarde alguns segundos',
+    flights_rate_limited_soft:
+      'Tráfego aéreo temporariamente limitado — mantendo última posição e tentando de novo',
+    flights_none_area: 'Nenhuma aeronave nesta área no momento',
     flights_icao: 'ICAO24',
     flights_country: 'País de origem',
     flights_altitude: 'Altitude',
@@ -442,8 +465,6 @@ const STRINGS = {
     layer_prodes_hint: 'Desmate acumulado PRODES (camada WMS — contexto histórico)',
     layer_sst: 'Temp. do Mar (SST)',
     layer_sst_hint: 'Temperatura da superfície oceânica (NASA GHRSST)',
-    layer_anatel: 'Antenas de Celular',
-    layer_anatel_hint: 'Localização das antenas de celular Claro/Vivo/TIM no Brasil (ANATEL)',
     source_alerts_name: 'KeClima + órgãos',
     sources_trust_note:
       'Em emergência, priorize INMET, Defesa Civil e canais oficiais — o KeClima não substitui alerta de desastre.',
@@ -453,7 +474,12 @@ const STRINGS = {
     customize_size_help:
       'Tamanho: P = compacto · M = médio · G = largo (mapa e gráficos ficam melhores em M ou G).',
     customize_reset: 'Restaurar padrão',
+    settings_saved: 'Painéis salvos — permanecem após atualizar a página',
+    settings_save_failed:
+      'Não foi possível salvar os painéis. Libere espaço do navegador e tente de novo.',
     widget_hide: 'Ocultar painel',
+    widget_move_up: 'Mover para cima',
+    widget_move_down: 'Mover para baixo',
     widget_size: 'Tamanho do painel',
     widget_size_cycle: 'Mudar tamanho (P/M/G)',
     widget_size_s: 'P — pequeno',
@@ -482,7 +508,7 @@ const STRINGS = {
     about_version: 'Versão',
     notify_rain_title: 'Aviso de chuva — KeClima',
     notify_rain_body: 'Risco de chuva forte nas próximas horas em',
-    reorder_hint: 'Arraste para reordenar widgets (modo compacto desativa animações extras)',
+    reorder_hint: '▲▼ reordena · S/M/L tamanho · × oculta',
     no_results: 'Nenhum resultado',
     loading_weather: 'Buscando clima…',
     elevation: 'Altitude',
@@ -591,6 +617,26 @@ const STRINGS = {
     unit_inhg: 'inHg',
     forecast_hourly: 'Hourly forecast',
     forecast_daily: 'Daily forecast',
+    forecast_home_title: 'Forecast',
+    forecast_home_now: 'Now',
+    forecast_home_today: 'Today',
+    forecast_home_48h: 'Next 48 hours',
+    forecast_home_10d: 'Next 10 days',
+    forecast_home_pop_max_hint: 'Peak rain chance that day: {pop}%',
+    forecast_home_rain_6h: 'Rain (6 h)',
+    forecast_home_scroll_hint: 'Swipe for more hours →',
+    forecast_home_blurb_empty: 'No forecast data right now.',
+    forecast_home_blurb_day: 'Today: {condition}.',
+    forecast_home_blurb_rain: 'Rain most likely around {when} ({pop}%).',
+    forecast_home_blurb_rain_mm:
+      'Rain expected around {when} — up to ~{mm} mm in the next hours ({pop}%).',
+    forecast_home_blurb_rain_maybe: 'Some chance of rain ({pop}%) in the next hours.',
+    forecast_home_blurb_dry: 'No meaningful rain in the next hours.',
+    forecast_home_blurb_range: 'Temperature between {min}° and {max}° in this period.',
+    forecast_home_alert_more: '{n} alerts · tap for details',
+    forecast_home_alert_details: 'Details',
+    forecast_home_alert_high: 'High',
+    forecast_home_alert_warn: 'Watch',
     chart_temp: 'Temperature',
     chart_pressure: 'Pressure',
     chart_humidity: 'Humidity',
@@ -744,6 +790,9 @@ const STRINGS = {
     flights_error: 'Could not load flights',
     flights_error_proxy: 'Run python3 serve.py (flights proxy). Plain static server is not enough.',
     flights_rate_limited: 'OpenSky rate limit — wait a few seconds',
+    flights_rate_limited_soft:
+      'Live traffic temporarily limited — keeping last positions and retrying',
+    flights_none_area: 'No aircraft in this area right now',
     flights_icao: 'ICAO24',
     flights_country: 'Origin country',
     flights_altitude: 'Altitude',
@@ -931,8 +980,6 @@ const STRINGS = {
     layer_prodes_hint: 'PRODES accumulated deforestation (WMS context layer)',
     layer_sst: 'Sea Surface Temp',
     layer_sst_hint: 'Ocean surface temperature overlay (NASA GHRSST)',
-    layer_anatel: 'Cell Towers (BR)',
-    layer_anatel_hint: 'Location of licensed mobile cell towers in Brazil (ANATEL)',
     source_alerts_name: 'KeClima + agencies',
     sources_trust_note:
       'In emergencies, prioritize INMET, Civil Defense and official channels — KeClima is not a disaster alert system.',
@@ -942,7 +989,12 @@ const STRINGS = {
     customize_size_help:
       'Size: S = compact · M = medium · L = wide (map and charts work better as M or L).',
     customize_reset: 'Restore defaults',
+    settings_saved: 'Panels saved — they stay after you refresh',
+    settings_save_failed:
+      'Could not save panels. Free up browser storage and try again.',
     widget_hide: 'Hide panel',
+    widget_move_up: 'Move up',
+    widget_move_down: 'Move down',
     widget_size: 'Panel size',
     widget_size_cycle: 'Change size (S/M/L)',
     widget_size_s: 'S — small',
@@ -971,7 +1023,7 @@ const STRINGS = {
     about_version: 'Version',
     notify_rain_title: 'Rain alert — KeClima',
     notify_rain_body: 'Heavy rain risk in the next hours in',
-    reorder_hint: 'Drag to reorder widgets (compact mode reduces animations)',
+    reorder_hint: '▲▼ reorder · S/M/L size · × hide',
     no_results: 'No results',
     loading_weather: 'Fetching weather…',
     elevation: 'Elevation',
@@ -1080,6 +1132,26 @@ const STRINGS = {
     unit_inhg: 'inHg',
     forecast_hourly: 'Pronóstico por hora',
     forecast_daily: 'Pronóstico diario',
+    forecast_home_title: 'Pronóstico',
+    forecast_home_now: 'Ahora',
+    forecast_home_today: 'Hoy',
+    forecast_home_48h: 'Próximas 48 horas',
+    forecast_home_10d: 'Próximos 10 días',
+    forecast_home_pop_max_hint: 'Pico de probabilidad del día: {pop}%',
+    forecast_home_rain_6h: 'Lluvia (6 h)',
+    forecast_home_scroll_hint: 'Desliza para ver más horas →',
+    forecast_home_blurb_empty: 'Sin datos de pronóstico por ahora.',
+    forecast_home_blurb_day: 'Hoy: {condition}.',
+    forecast_home_blurb_rain: 'Lluvia más probable alrededor de {when} ({pop}%).',
+    forecast_home_blurb_rain_mm:
+      'Lluvia esperada alrededor de {when} — hasta ~{mm} mm en las próximas horas ({pop}%).',
+    forecast_home_blurb_rain_maybe: 'Posibilidad de lluvia ({pop}%) en las próximas horas.',
+    forecast_home_blurb_dry: 'Sin lluvia relevante en las próximas horas.',
+    forecast_home_blurb_range: 'Temperatura entre {min}° y {max}° en este período.',
+    forecast_home_alert_more: '{n} avisos · toque para detalles',
+    forecast_home_alert_details: 'Detalles',
+    forecast_home_alert_high: 'Alto',
+    forecast_home_alert_warn: 'Atención',
     chart_temp: 'Temperatura',
     chart_pressure: 'Presión',
     chart_humidity: 'Humedad',
@@ -1233,6 +1305,9 @@ const STRINGS = {
     flights_error: 'No se pudieron cargar los vuelos',
     flights_error_proxy: 'Use python3 serve.py (proxy de vuelos). El servidor simple no basta.',
     flights_rate_limited: 'Límite de OpenSky — espere unos segundos',
+    flights_rate_limited_soft:
+      'Tráfico aéreo temporalmente limitado — manteniendo última posición y reintentando',
+    flights_none_area: 'Ninguna aeronave en esta área ahora',
     flights_icao: 'ICAO24',
     flights_country: 'País de origen',
     flights_altitude: 'Altitud',
@@ -1420,8 +1495,6 @@ const STRINGS = {
     layer_prodes_hint: 'Desmate acumulado PRODES (capa WMS — contexto histórico)',
     layer_sst: 'Temp. del Mar',
     layer_sst_hint: 'Temperatura de la superficie oceánica (NASA GHRSST)',
-    layer_anatel: 'Antenas de Celular (BR)',
-    layer_anatel_hint: 'Ubicación de antenas de telefonía móvil Claro/Vivo/TIM (ANATEL)',
     source_alerts_name: 'KeClima + organismos',
     sources_trust_note:
       'En emergencia, priorice INMET, Defensa Civil y canales oficiales — KeClima no sustituye alertas de desastre.',
@@ -1431,7 +1504,12 @@ const STRINGS = {
     customize_size_help:
       'Tamaño: P = compacto · M = medio · G = ancho (mapa y gráficos quedan mejor en M o G).',
     customize_reset: 'Restaurar predeterminado',
+    settings_saved: 'Paneles guardados — se mantienen al actualizar la página',
+    settings_save_failed:
+      'No se pudieron guardar los paneles. Libere espacio del navegador e intente de nuevo.',
     widget_hide: 'Ocultar panel',
+    widget_move_up: 'Mover arriba',
+    widget_move_down: 'Mover abajo',
     widget_size: 'Tamaño del panel',
     widget_size_cycle: 'Cambiar tamaño (P/M/G)',
     widget_size_s: 'P — pequeño',
@@ -1460,7 +1538,7 @@ const STRINGS = {
     about_version: 'Versión',
     notify_rain_title: 'Aviso de lluvia — KeClima',
     notify_rain_body: 'Riesgo de lluvia fuerte en las próximas horas en',
-    reorder_hint: 'Arrastre para reordenar widgets (el modo compacto reduce animaciones)',
+    reorder_hint: '▲▼ reordena · P/M/G tamaño · × oculta',
     no_results: 'Sin resultados',
     loading_weather: 'Buscando clima…',
     elevation: 'Altitud',
@@ -1482,10 +1560,30 @@ const STRINGS = {
  * @param {string} [lang]
  * @returns {string}
  */
-export function t(key, lang) {
-  const code = lang || getSettings().language || 'pt';
+/**
+ * Tradução. Segundo arg pode ser código de idioma (legado) ou mapa de {placeholders}.
+ * @param {string} key
+ * @param {string|Record<string, string|number>} [langOrParams]
+ * @param {string} [lang]
+ */
+export function t(key, langOrParams, lang) {
+  let code = getSettings().language || 'pt';
+  /** @type {Record<string, string|number>|null} */
+  let params = null;
+  if (langOrParams && typeof langOrParams === 'object') {
+    params = langOrParams;
+    if (lang) code = lang;
+  } else if (typeof langOrParams === 'string') {
+    code = langOrParams;
+  }
   const dict = STRINGS[code] || STRINGS.pt;
-  return dict[key] || STRINGS.pt[key] || key;
+  let text = dict[key] || STRINGS.pt[key] || key;
+  if (params) {
+    for (const [k, v] of Object.entries(params)) {
+      text = text.split(`{${k}}`).join(String(v));
+    }
+  }
+  return text;
 }
 
 /**

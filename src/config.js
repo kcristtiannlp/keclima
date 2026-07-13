@@ -11,7 +11,7 @@
 /** @typedef {'24h' | '7d' | '30d' | '365d'} ChartRange */
 
 export const APP_NAME = 'KeClima';
-export const APP_VERSION = '0.7.5';
+export const APP_VERSION = '0.8.10';
 
 export const API = {
   openMeteo: {
@@ -22,7 +22,7 @@ export const API = {
   nominatim: {
     search: 'https://nominatim.openstreetmap.org/search',
     reverse: 'https://nominatim.openstreetmap.org/reverse',
-    userAgent: 'KeClima/0.6 (weather-pwa; contact: local)',
+    userAgent: 'KeClima/0.8.10 (weather-pwa; contact: local)',
     minIntervalMs: 1100,
   },
   rainViewer: {
@@ -114,19 +114,16 @@ export const DEFAULT_SETTINGS = {
    * Painéis visíveis no dashboard (ordem).
    * O usuário pode excluir/incluir — lista completa em WIDGET_CATALOG.
    */
-  /** Default enxuto — mapa/compare/sources opcionais via Personalizar */
+  /** Default: previsão em destaque; painéis avançados via Personalizar */
   widgetOrder: [
-    'temperature',
+    'forecastHome',
     'inmet',
-    'conditions',
     'map',
-    'humidity',
-    'pressure',
-    'wind',
-    'uv',
     'aqi',
-    'alerts',
-    'forecast',
+    'uv',
+    'humidity',
+    'wind',
+    'pressure',
     'sources',
   ],
   /**
@@ -134,6 +131,7 @@ export const DEFAULT_SETTINGS = {
    * s = 1 coluna, m = 2 colunas, l = largura total (+ altura maior no mapa)
    */
   widgetSizes: {
+    forecastHome: 'l',
     temperature: 'm',
     inmet: 'l',
     conditions: 'm',
@@ -155,6 +153,7 @@ export const DEFAULT_SETTINGS = {
 
 /** Todos os painéis que podem ir no dashboard (incluir/excluir). */
 export const WIDGET_CATALOG = [
+  'forecastHome',
   'temperature',
   'inmet',
   'conditions',
@@ -178,6 +177,8 @@ export const WIDGET_SIZES = /** @type {const} */ (['s', 'm', 'l']);
 
 export const STORAGE_KEYS = {
   settings: 'keclima:settings',
+  /** Ordem dos painéis — chave dedicada (não some se o blob de settings falhar) */
+  widgetOrder: 'keclima:widgetOrder',
   favorites: 'keclima:favorites',
   history: 'keclima:history',
   lastWeather: 'keclima:lastWeather',
